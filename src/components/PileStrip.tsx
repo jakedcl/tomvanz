@@ -2,7 +2,7 @@
 
 import {useEffect, useRef, useState} from 'react'
 import {CloseIcon} from './CloseIcon'
-import {urlFor} from '@/lib/sanity/image'
+import {sanityImageAlt, urlFor} from '@/lib/sanity/image'
 import type {PinDoc} from '@/lib/sanity/types'
 
 type Props = {
@@ -84,7 +84,7 @@ export function PileStrip({pins, onIndexChange, onOpen, onClose}: Props) {
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={urlFor(pin.photo).width(480).height(330).fit('crop').url()}
-                  alt=""
+                  alt={sanityImageAlt(pin.photo, title || date || 'Photo')}
                   className="absolute inset-0 h-full w-full object-cover"
                 />
               ) : null}

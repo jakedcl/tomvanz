@@ -7,7 +7,8 @@ import {ElevationChart} from './ElevationChart'
 import {PhotoShape} from './shapes'
 import {formatMiles} from '@/lib/geo'
 import {trackMiles} from '@/lib/track-mileage'
-import {urlFor} from '@/lib/sanity/image'
+import type {SanityImageSource} from '@sanity/image-url'
+import {infoCardCoverImage, infoCardLightboxImage, sanityImageAlt} from '@/lib/sanity/image'
 import {lineCoordinates, type MapData, type SelectedItem} from '@/lib/sanity/types'
 import {trackColor} from '@/lib/track-color'
 
@@ -22,8 +23,7 @@ type CardModel = {
   eyebrow: string
   stats: string[]
   body: string | null
-  imageUrl: string | null
-  fullUrl: string | null
+  image: SanityImageSource | null
   imageAlt: string
   accent: string
   /** Show the little photo symbol beside the label. */
@@ -58,11 +58,8 @@ function cardModel(data: MapData, selected: SelectedItem): CardModel | null {
       eyebrow: activityLabel(track.activity),
       stats,
       body: null,
-      imageUrl: track.photo?.asset
-        ? urlFor(track.photo).width(1000).height(750).fit('crop').url()
-        : null,
-      fullUrl: track.photo?.asset ? urlFor(track.photo).width(2400).fit('max').url() : null,
-      imageAlt: track.title,
+      image: track.photo?.asset ? track.photo : null,
+      imageAlt: sanityImageAlt(track.photo, track.title),
       accent: trackColor(track.activity),
       isPhoto: false,
       dashed: track.activity === 'hike',
@@ -77,18 +74,24 @@ function cardModel(data: MapData, selected: SelectedItem): CardModel | null {
     eyebrow: pin.isDrone ? 'Drone' : 'Photo',
     stats: when ? [when] : [],
     body: pin.note ?? null,
-    imageUrl: pin.photo?.asset
-      ? urlFor(pin.photo).width(1000).height(750).fit('crop').url()
-      : null,
-    fullUrl: pin.photo?.asset ? urlFor(pin.photo).width(2400).fit('max').url() : null,
-    imageAlt: pin.title,
+    image: pin.photo?.asset ? pin.photo : null,
+    imageAlt: sanityImageAlt(pin.photo, pin.title),
     accent: '#111',
     isPhoto: true,
     dashed: false,
   }
 }
 
-function Lightbox({url, alt, onClose}: {url: string; alt: string; onClose: () => void}) {
+function Lightbox({
+  image,
+  alt,
+  onClose,
+}: {
+  image: SanityImageSource
+  alt: string
+  onClose: () => void
+}) {
+  const {src, srcSet, sizes} = infoCardLightboxImage(image)
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -108,7 +111,13 @@ function Lightbox({url, alt, onClose}: {url: string; alt: string; onClose: () =>
       className="tv-lightbox fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm"
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={url} alt={alt} className="max-h-full max-w-full rounded-lg object-contain" />
+      <img
+        src={src}
+        srcSet={srcSet}
+        sizes={sizes}
+        alt={alt}
+        className="max-h-full max-w-full rounded-lg object-contain"
+      />
       <button
         type="button"
         aria-label="Close photo"
@@ -141,6 +150,8 @@ export function InfoCard({data, selected, onClose}: Props) {
   const routeCoords = useMemo(() => (track ? lineCoordinates(track.route) : null), [track])
   const card = cardModel(data, selected)
   if (!card) return null
+
+  const cover = card.image ? infoCardCoverImage(card.image) : null
 
   const share = async () => {
     const url = new URL('/map', window.location.origin)
@@ -177,7 +188,7 @@ export function InfoCard({data, selected, onClose}: Props) {
     <article className={frame}>
       <PointerColor light={hasDetails} />
       <div className="relative aspect-[4/3] overflow-hidden bg-neutral-200">
-        {card.imageUrl ? (
+        {cover ? (
           <button
             type="button"
             onClick={() => setExpanded(true)}
@@ -186,7 +197,9 @@ export function InfoCard({data, selected, onClose}: Props) {
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={card.imageUrl}
+              src={cover.src}
+              srcSet={cover.srcSet}
+              sizes={cover.sizes}
               alt={card.imageAlt}
               className="h-full w-full object-cover transition-transform duration-500 hover:scale-[1.03]"
             />
@@ -270,8 +283,8 @@ export function InfoCard({data, selected, onClose}: Props) {
         </div>
       ) : null}
 
-      {expanded && card.fullUrl ? (
-        <Lightbox url={card.fullUrl} alt={card.imageAlt} onClose={() => setExpanded(false)} />
+      {expanded && card.image ? (
+        <Lightbox image={card.image} alt={card.imageAlt} onClose={() => setExpanded(false)} />
       ) : null}
     </article>
   )

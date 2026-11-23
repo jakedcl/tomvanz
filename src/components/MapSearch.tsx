@@ -3,7 +3,7 @@
 import {useState} from 'react'
 import {CloseIcon} from './CloseIcon'
 import {PhotoShape} from './shapes'
-import {urlFor} from '@/lib/sanity/image'
+import {sanityImageAlt, urlFor} from '@/lib/sanity/image'
 import {formatMiles} from '@/lib/geo'
 import {trackColor} from '@/lib/track-color'
 import {
@@ -159,7 +159,7 @@ function ResultThumb({item}: {item: ResultItem}) {
       // eslint-disable-next-line @next/next/no-img-element
       <img
         src={urlFor(item.photo).width(112).height(112).fit('crop').url()}
-        alt=""
+        alt={sanityImageAlt(item.photo, item.title)}
         className="h-11 w-11 shrink-0 rounded-lg object-cover"
       />
     )

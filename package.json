@@ -11,7 +11,8 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:droneclips": "node scripts/droneclips-browser-test.mjs"
+    "test:droneclips": "node scripts/droneclips-browser-test.mjs",
+    "typegen": "sanity schema extract --force && sanity typegen generate"
   },
   "dependencies": {
     "@mediabunny/aac-encoder": "^1.66.0",
