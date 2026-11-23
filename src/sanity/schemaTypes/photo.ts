@@ -25,6 +25,14 @@ export const photo = defineType({
         accept: 'image/*',
         metadata: ['exif', 'location'],
       },
+      fields: [
+        defineField({
+          name: 'alt',
+          title: 'Alt text',
+          type: 'string',
+          description: 'Short description for screen readers and SEO. Falls back to the photo title when empty.',
+        }),
+      ],
       components: {input: CatchImageInput},
       validation: (Rule) => Rule.required(),
     }),

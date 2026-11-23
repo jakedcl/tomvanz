@@ -33,6 +33,14 @@ export const track = defineType({
       type: 'image',
       description: 'Optional cover for the map card.',
       options: {hotspot: true},
+      fields: [
+        defineField({
+          name: 'alt',
+          title: 'Alt text',
+          type: 'string',
+          description: 'Short description for screen readers and SEO. Falls back to the track title when empty.',
+        }),
+      ],
     }),
     defineField({
       name: 'file',
