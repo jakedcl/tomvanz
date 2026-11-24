@@ -11,7 +11,8 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:droneclips": "node scripts/droneclips-browser-test.mjs"
+    "test:droneclips": "node scripts/droneclips-browser-test.mjs",
+    "typegen": "sanity schema extract --force && sanity typegen generate"
   },
   "dependencies": {
     "@mediabunny/aac-encoder": "^1.66.0",
@@ -34,7 +35,7 @@
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^9",
+    "eslint": "^10",
     "eslint-config-next": "16.4.6",
     "playwright": "^1.65.1",
     "tailwindcss": "^4",

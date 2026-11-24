@@ -1,5 +1,6 @@
 import {defineConfig} from 'sanity'
 import {structureTool} from 'sanity/structure'
+import {dataset, projectId} from './src/lib/sanity/env'
 import {schemaTypes} from './src/sanity/schemaTypes'
 import {structure} from './src/sanity/structure'
 import {BulkUploadTool} from './src/sanity/components/BulkUploadTool'
@@ -14,9 +15,10 @@ const UploadIcon = () => (
 export default defineConfig({
   name: 'tomvanz',
   title: 'Tom Vanz',
-  projectId: 'lee2r8sa',
-  dataset: 'production',
+  projectId,
+  dataset,
   basePath: '/studio',
+  announcements: {enabled: false},
   releases: {enabled: false},
   scheduledDrafts: {enabled: false},
   tasks: {enabled: false},

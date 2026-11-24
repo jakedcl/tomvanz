@@ -21,10 +21,15 @@ export const photo = defineType({
       description:
         'Upload the original photo. Its GPS position and date are picked up automatically; if it has no GPS you can drop a pin on the map.',
       type: 'image',
-      options: {
-        accept: 'image/*',
-        metadata: ['exif', 'location'],
-      },
+      options: {accept: 'image/*'},
+      fields: [
+        defineField({
+          name: 'alt',
+          title: 'Alt text',
+          type: 'string',
+          description: 'Short description for screen readers and SEO. Falls back to the photo title when empty.',
+        }),
+      ],
       components: {input: CatchImageInput},
       validation: (Rule) => Rule.required(),
     }),

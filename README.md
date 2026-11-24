@@ -8,8 +8,7 @@ Personal site for Tom Vanz: a Next.js app at the repository root.
 
 - Home (opens the map): https://tomvanz.com/
 - Map: https://tomvanz.com/map
-- Video compressor (Drone) (in-browser; files stay on your device): https://tomvanz.com/droneclips
-
+- Video compressor (runs in the browser; files stay on your device): https://tomvanz.com/droneclips
 - Studio: https://tomvanz.com/studio
 
 The video compressor offers three quality levels — **Low** (720p, quick sharing), **Medium** (1080p, default), and **High** (full resolution for archiving, HEVC when the browser supports it). Drop a whole camera folder to compress videos, pass photos, sidecars, and DNG (RAW) files through unchanged on every mode, and download one zip that preserves the folder layout.
@@ -22,7 +21,7 @@ npm install && npm run dev
 
 - Home: http://localhost:3000/
 - Map: http://localhost:3000/map
-- Drone Clips: http://localhost:3000/droneclips
+- Video compressor: http://localhost:3000/droneclips
 - Studio: http://localhost:3000/studio
 
 Copy `.env.example` to `.env.local` if you want a Sanity read token. Project id and dataset use the public defaults in the repo.
@@ -32,6 +31,8 @@ Other commands:
 ```bash
 npm run build
 npm run lint
+npm run typecheck
+npm test
 ```
 
 ## Editing content

@@ -17,11 +17,11 @@ This Next.js version has breaking changes; check `node_modules/next/dist/docs` b
 
 ## Commands
 
-From the repo root: `npm install && npm run dev`; `npm run build`; `npm run lint`.
+From the repo root: `npm install && npm run dev`; `npm run build`; `npm run lint`; `npm run typegen` after schema or GROQ query changes.
 
 ## Content
 
-Sanity project `lee2r8sa`, dataset `production` (hardcoded in `sanity.config.tsx` / `sanity.cli.ts`). `SANITY_API_READ_TOKEN` is optional. Drafts never show on the map.
+Sanity project and dataset come from `NEXT_PUBLIC_SANITY_PROJECT_ID` and `NEXT_PUBLIC_SANITY_DATASET` (`src/lib/sanity/env.ts`, defaulting to `lee2r8sa` / `production`). `SANITY_API_READ_TOKEN` is optional. Drafts never show on the map.
 
 ## Gotchas
 
@@ -30,7 +30,7 @@ Sanity project `lee2r8sa`, dataset `production` (hardcoded in `sanity.config.tsx
 - GPX routes are stored as JSON text, not geopoint arrays.
 - Content model: **Photo** (`photo`: image, title, location, note, takenAt, drone, plus a hidden `legacyId`) and **Route** (`track`). There is no separate pin type. `legacyId` holds the id an old pin had before the 2026-11 conversion, so shared links made with it still open the photo (`src/lib/shared-item.ts`).
 - Drone photos are detected from `DJI_*` file names (`src/lib/drone.ts`), with a manual override switch in the Studio.
-- Studio tools: **Bulk upload** (creates Photos from dropped images, reading GPS and date from the file).
+- Studio tools: **Bulk upload** (drop images and GPX files, fill in titles, and for routes bike/hike/other, remove any, then one button creates the Photos and Routes; photo GPS and date and route start time are read from the files).
 - Track colors come from the activity field: bike blue, hike green.
 
 ## Repo facts
@@ -40,7 +40,7 @@ Sanity project `lee2r8sa`, dataset `production` (hardcoded in `sanity.config.tsx
 
 <!-- BEGIN:nextjs-agent-rules -->
 
-# This is NOT the Next.js you know
+## This is NOT the Next.js you know
 
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
 

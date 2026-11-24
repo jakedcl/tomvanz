@@ -21,6 +21,7 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     "public/vendor/**",
   ]),
+  globalIgnores(["src/lib/sanity/sanity.types.ts", "schema.json"]),
 ]);
 
 export default eslintConfig;
