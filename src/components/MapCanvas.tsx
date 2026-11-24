@@ -251,7 +251,6 @@ export function MapCanvas({
     }
 
     mapRef.current = map
-    ;(window as unknown as {__map?: unknown}).__map = map
     map.addControl(new NavigationControl({showCompass: false}), 'bottom-right')
     map.on('error', (event) => {
       // A missing elevation tile just leaves the terrain flat; it shouldn't take down the map.
