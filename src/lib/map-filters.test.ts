@@ -5,6 +5,7 @@ import {
   emptyMapFilters,
   filterOptions,
   filtersActive,
+  flatTypeOptions,
   resultList,
 } from './map-filters'
 import type {MapData} from './sanity/types'
@@ -98,12 +99,13 @@ describe('drone filter', () => {
 
 describe('filterOptions', () => {
   it('only offers route kinds that exist', () => {
-    const {typeOptions} = filterOptions(data)
-    expect(typeOptions.map((o) => o.value)).toEqual([
-      'pin:all',
-      'track:all',
-      'track:hike',
-    ])
+    expect(flatTypeOptions(data).map((o) => o.value)).toEqual(['pin:all', 'track:all', 'track:hike'])
+  })
+
+  it('keeps route kinds separate from top-level groups', () => {
+    const {groups, routeKinds} = filterOptions(data)
+    expect(groups.map((o) => o.value)).toEqual(['pin:all', 'track:all'])
+    expect(routeKinds.map((o) => o.value)).toEqual(['track:hike'])
   })
 })
 
@@ -112,7 +114,7 @@ describe('resultList icons', () => {
     const items = resultList(data, () => null)
     expect(items.find((i) => i.kind === 'track')?.activity).toBe('hike')
     expect(items.find((i) => i.id === 'a')).toMatchObject({kind: 'pin', label: 'Photo'})
-    expect(items.find((i) => i.id === 'b')).toMatchObject({kind: 'pin', label: 'Drone'})
+    expect(items.find((i) => i.id === 'b')).toMatchObject({kind: 'pin', label: 'Aerial'})
   })
 })
 

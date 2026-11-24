@@ -67,10 +67,14 @@ export function filterOptions(data: MapData) {
   if (data.tracks.length > 0) groups.push({value: 'track:all', label: 'Routes'})
   if (data.flights.length > 0) groups.push({value: 'flight:all', label: 'Flights'})
 
-  const typeOptions: TypeOption[] = [...groups, ...kinds, ...aircraftChips]
-
   const hasDrone = data.pins.some((pin) => pin.isDrone)
-  return {typeOptions, hasDrone}
+  return {groups, routeKinds: kinds, aircraftChips, hasDrone}
+}
+
+/** Flat list for tests and legacy callers. */
+export function flatTypeOptions(data: MapData) {
+  const {groups, routeKinds, aircraftChips} = filterOptions(data)
+  return [...groups, ...routeKinds, ...aircraftChips]
 }
 
 export function filtersActive(state: MapFilterState) {
@@ -148,7 +152,7 @@ export function resultList(shown: MapData, miles: (track: TrackDoc) => number | 
       kind: 'pin',
       id: pin._id,
       title: pin.title?.trim() || 'Untitled photo',
-      label: pin.isDrone ? 'Drone' : 'Photo',
+      label: pin.isDrone ? 'Aerial' : 'Photo',
       date: pin.at,
       photo: pin.photo,
       miles: null,

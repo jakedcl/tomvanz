@@ -100,7 +100,7 @@ function cardModel(data: MapData, selected: SelectedItem): CardModel | null {
   const when = formatMapDate(pin.at) ?? undefined
   return {
     title: pin.title,
-    eyebrow: pin.isDrone ? 'Drone' : 'Photo',
+    eyebrow: pin.isDrone ? 'Aerial' : 'Photo',
     stats: when ? [when] : [],
     body: pin.note ?? null,
     image: pin.photo?.asset ? pin.photo : null,

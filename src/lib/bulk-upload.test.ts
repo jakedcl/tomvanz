@@ -5,6 +5,7 @@ import {
   guessActivity,
   flightFromUpload,
   countsTowardBulkUpload,
+  defaultIncludeOnMap,
   isFlightLogFile,
   isGpxFile,
   isShortFlightDuration,
