@@ -10,7 +10,7 @@ type Props = {
 
 export async function generateMetadata({searchParams}: Props): Promise<Metadata> {
   const params = await searchParams
-  if (!first(params.photo) && !first(params.track)) return {title: 'Tom Vanz'}
+  if (!first(params.photo) && !first(params.track) && !first(params.flight)) return {title: 'Tom Vanz'}
   const shared = sharedItem((await loadMapData()).data, params)
   if (!shared) return {title: 'Tom Vanz'}
   const image = shared.photo?.asset

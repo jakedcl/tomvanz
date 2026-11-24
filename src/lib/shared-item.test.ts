@@ -5,6 +5,7 @@ import type {MapData} from './sanity/types'
 
 const data: MapData = {
   name: 't',
+  flights: [{_id: 'f1', title: 'Morning flight', path: {type: 'LineString', coordinates: '[]'}}],
   pins: [
     {_id: 'photo-abc', legacyId: 'abc', title: 'Converted', location: {lat: 1, lng: 2}},
     {_id: 'plain', title: 'Never an old pin', location: {lat: 3, lng: 4}},
@@ -23,8 +24,9 @@ describe('sharedItem', () => {
     expect(shared?.title).toBe('Converted')
   })
 
-  it('opens a route, flying to it, and returns nothing for an unknown id', () => {
+  it('opens a route or flight, flying to it, and returns nothing for an unknown id', () => {
     expect(sharedItem(data, {track: 't1'})?.selected).toEqual({kind: 'track', id: 't1', fly: true})
+    expect(sharedItem(data, {flight: 'f1'})?.selected).toEqual({kind: 'flight', id: 'f1', fly: true})
     expect(sharedItem(data, {photo: 'nope'})).toBeNull()
   })
 })

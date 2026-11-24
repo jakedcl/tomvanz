@@ -11,6 +11,7 @@ import type {MapData} from './sanity/types'
 
 const data: MapData = {
   name: 'test',
+  flights: [],
   pins: [
     {_id: 'a', title: 'Mount Marcy', note: 'Highest in NY', at: '2025-07-04T10:00:00Z', location: {lat: 44.1, lng: -73.9}},
     {_id: 'b', title: 'Lake Colden', at: '2024-07-03T10:00:00Z', isDrone: true, location: {lat: 44.1, lng: -73.98}},

@@ -3,6 +3,7 @@
 import {useEffect, useRef, useState} from 'react'
 import {CloseIcon} from './CloseIcon'
 import {sanityImageAlt, urlFor} from '@/lib/sanity/image'
+import {formatMapDate} from '@/lib/format-map-date'
 import type {PinDoc} from '@/lib/sanity/types'
 
 type Props = {
@@ -10,13 +11,6 @@ type Props = {
   onIndexChange: (index: number) => void
   onOpen: (id: string) => void
   onClose: () => void
-}
-
-function formatDate(value?: string) {
-  if (!value) return null
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return null
-  return date.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'})
 }
 
 /**
@@ -67,7 +61,7 @@ export function PileStrip({pins, onIndexChange, onOpen, onClose}: Props) {
         className="pointer-events-auto flex snap-x snap-mandatory gap-3 overflow-x-auto px-[calc(50%-110px)] pb-2 [mask-image:linear-gradient(to_right,transparent,black_24px,black_calc(100%-24px),transparent)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {pins.map((pin, i) => {
-          const date = formatDate(pin.at)
+          const date = formatMapDate(pin.at ?? undefined)
           const title = pin.title?.trim() ?? ''
           const caption = title || date
           return (

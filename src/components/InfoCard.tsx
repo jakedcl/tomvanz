@@ -1,22 +1,32 @@
 'use client'
 
-import {useEffect, useMemo, useRef, useState} from 'react'
+import {useEffect, useMemo, useState} from 'react'
 import {createPortal} from 'react-dom'
 import {CloseIcon} from './CloseIcon'
 import {ElevationChart} from './ElevationChart'
+import {FlightAltitudeChart} from './FlightAltitudeChart'
 import {PhotoShape} from './shapes'
+import {FLIGHT_PATH_COLOR} from '@/lib/flight-color'
+import {formatFeet} from '@/lib/elevation'
 import {formatMiles} from '@/lib/geo'
+import type {FlightSeriesSample} from '@/lib/flight-log'
 import {trackMiles} from '@/lib/track-mileage'
 import type {SanityImageSource} from '@sanity/image-url'
-import {infoCardCoverImage, infoCardLightboxImage, sanityImageAlt} from '@/lib/sanity/image'
+import {infoCardCoverImage, infoCardLightboxImage, sanityImageAlt, urlFor} from '@/lib/sanity/image'
 import {lineCoordinates, type MapData, type SelectedItem} from '@/lib/sanity/types'
+import {formatDurationSeconds} from '@/lib/format-duration'
+import {formatMapDate} from '@/lib/format-map-date'
 import {trackColor} from '@/lib/track-color'
 
 type Props = {
   data: MapData
   selected: SelectedItem
   onClose: () => void
+  onFlightScrub?: (sample: FlightSeriesSample | null) => void
+  onOpenPhoto?: (id: string) => void
 }
+
+type LinkedPhoto = {_id: string; title?: string; photo?: {asset?: {_ref: string}}}
 
 type CardModel = {
   title: string
@@ -31,13 +41,6 @@ type CardModel = {
   dashed: boolean
 }
 
-function formatDate(value?: string) {
-  if (!value) return null
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return null
-  return date.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'})
-}
-
 function activityLabel(activity: string) {
   if (activity === 'bike') return 'Bike'
   if (activity === 'hike') return 'Hike'
@@ -45,10 +48,36 @@ function activityLabel(activity: string) {
 }
 
 function cardModel(data: MapData, selected: SelectedItem): CardModel | null {
+  if (selected.kind === 'flight') {
+    const flight = data.flights.find((item) => item._id === selected.id)
+    if (!flight) return null
+    const when = formatMapDate(flight.startedAt) ?? undefined
+    const miles =
+      flight.distanceMeters != null && flight.distanceMeters > 0
+        ? formatMiles(flight.distanceMeters / 1609.344)
+        : null
+    const duration = formatDurationSeconds(flight.durationSeconds) ?? undefined
+    const maxHt =
+      flight.maxHeightMeters != null ? formatFeet(flight.maxHeightMeters * 3.28084) : null
+    const stats = [when, flight.place, duration, miles, maxHt ? `${maxHt} max` : null, flight.aircraft]
+      .filter((item): item is string => Boolean(item))
+    return {
+      title: flight.title,
+      eyebrow: 'Flight',
+      stats,
+      body: null,
+      image: null,
+      imageAlt: flight.title,
+      accent: FLIGHT_PATH_COLOR,
+      isPhoto: false,
+      dashed: false,
+    }
+  }
+
   if (selected.kind === 'track') {
     const track = data.tracks.find((item) => item._id === selected.id)
     if (!track) return null
-    const when = formatDate(track.startedAt)
+    const when = formatMapDate(track.startedAt) ?? undefined
     const miles = trackMiles(track)
     const stats = [when, miles ? formatMiles(miles) : null].filter((item): item is string =>
       Boolean(item),
@@ -68,7 +97,7 @@ function cardModel(data: MapData, selected: SelectedItem): CardModel | null {
 
   const pin = data.pins.find((item) => item._id === selected.id)
   if (!pin) return null
-  const when = formatDate(pin.at)
+  const when = formatMapDate(pin.at) ?? undefined
   return {
     title: pin.title,
     eyebrow: pin.isDrone ? 'Drone' : 'Photo',
@@ -131,31 +160,53 @@ function Lightbox({
   )
 }
 
-/**
- * Colours the card's pointer (the little arrow down to its photo on the map) to match the
- * bottom of the card: white when there's a details section, dark when the photo runs to the edge.
- */
-function PointerColor({light}: {light: boolean}) {
-  const ref = useRef<HTMLSpanElement | null>(null)
-  useEffect(() => {
-    ref.current?.closest<HTMLElement>('.tv-popup')?.style.setProperty('--tip', light ? '#ffffff' : '#0c0c0c')
-  }, [light])
-  return <span ref={ref} hidden />
-}
-
-export function InfoCard({data, selected, onClose}: Props) {
+export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: Props) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [linkedPhotos, setLinkedPhotos] = useState<LinkedPhoto[]>([])
   const track = selected.kind === 'track' ? data.tracks.find((item) => item._id === selected.id) : undefined
+  const flight = selected.kind === 'flight' ? data.flights.find((item) => item._id === selected.id) : undefined
   const routeCoords = useMemo(() => (track ? lineCoordinates(track.route) : null), [track])
   const card = cardModel(data, selected)
+
+  useEffect(() => {
+    if (selected.kind !== 'flight' && selected.kind !== 'track') return
+    const path =
+      selected.kind === 'flight'
+        ? `/api/flight/${encodeURIComponent(selected.id)}`
+        : `/api/track/${encodeURIComponent(selected.id)}`
+    let cancelled = false
+    fetch(path)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((payload: {photos: LinkedPhoto[]}) => {
+        if (!cancelled) setLinkedPhotos(payload.photos ?? [])
+      })
+      .catch(() => !cancelled && setLinkedPhotos([]))
+    return () => {
+      cancelled = true
+    }
+  }, [selected.id, selected.kind])
+
+  useEffect(() => {
+    if (expanded) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose, expanded])
+
   if (!card) return null
 
   const cover = card.image ? infoCardCoverImage(card.image) : null
 
   const share = async () => {
     const url = new URL('/map', window.location.origin)
-    url.searchParams.set(selected.kind === 'pin' ? 'photo' : 'track', selected.id)
+    const key = selected.kind === 'pin' ? 'photo' : selected.kind === 'flight' ? 'flight' : 'track'
+    url.searchParams.set(key, selected.id)
     try {
       if (navigator.share) {
         await navigator.share({title: card.title, url: url.toString()})
@@ -174,20 +225,23 @@ export function InfoCard({data, selected, onClose}: Props) {
   }
 
   const frame =
-    'tv-card w-[min(340px,calc(100vw-24px))] max-h-[var(--card-max,520px)] overflow-y-auto overflow-x-hidden rounded-[22px] bg-white shadow-[0_24px_64px_rgba(0,0,0,0.3)] ring-1 ring-black/5'
+    'tv-card tv-sheet w-full max-h-[min(70vh,560px)] overflow-y-auto overflow-x-hidden rounded-t-[22px] bg-white shadow-[0_-8px_40px_rgba(0,0,0,0.22)] ring-1 ring-black/5 md:rounded-[22px] md:shadow-[0_24px_64px_rgba(0,0,0,0.28)]'
 
   // An untitled photo leads with its date instead of leaving a blank headline.
   const untitled = card.title.trim() === ''
   const headline = untitled ? (card.stats[0] ?? '') : card.title
   const chips = untitled ? card.stats.slice(1) : card.stats
   const hasRoute = Boolean(routeCoords && routeCoords.length >= 2)
-  const hasDetails = chips.length > 0 || Boolean(card.body) || hasRoute
+  const isFlight = selected.kind === 'flight' && Boolean(flight)
+  const linkedForSelection =
+    selected.kind === 'flight' || selected.kind === 'track' ? linkedPhotos : []
+  const hasDetails =
+    chips.length > 0 || Boolean(card.body) || hasRoute || isFlight || linkedForSelection.length > 0
   const hasCaption = Boolean(headline) || Boolean(card.eyebrow)
 
   return (
     <article className={frame}>
-      <PointerColor light={hasDetails} />
-      <div className="relative aspect-[4/3] overflow-hidden bg-neutral-200">
+      <div className="relative aspect-[4/3] overflow-hidden bg-neutral-200 md:rounded-t-[22px]">
         {cover ? (
           <button
             type="button"
@@ -279,7 +333,40 @@ export function InfoCard({data, selected, onClose}: Props) {
               {card.body}
             </p>
           ) : null}
+          {linkedForSelection.length > 0 ? (
+            <div className={`${chips.length || card.body ? 'mt-3' : ''} flex gap-2 overflow-x-auto pb-1`}>
+              {linkedForSelection.map((item) => {
+                const thumb = item.photo?.asset
+                  ? urlFor(item.photo).width(160).height(120).fit('crop').url()
+                  : null
+                return (
+                  <button
+                    key={item._id}
+                    type="button"
+                    onClick={() => onOpenPhoto?.(item._id)}
+                    className="h-16 w-20 shrink-0 overflow-hidden rounded-lg ring-1 ring-black/10"
+                    aria-label={item.title?.trim() || 'Linked photo'}
+                  >
+                    {thumb ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={thumb} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="flex h-full items-center justify-center bg-neutral-200 text-[10px] text-black/50">Photo</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
           {hasRoute && routeCoords ? <ElevationChart coords={routeCoords} color={card.accent} /> : null}
+          {isFlight && flight && onFlightScrub ? (
+            <FlightAltitudeChart
+              key={flight._id}
+              flightId={flight._id}
+              durationSeconds={flight.durationSeconds}
+              onScrub={onFlightScrub}
+            />
+          ) : null}
         </div>
       ) : null}
 

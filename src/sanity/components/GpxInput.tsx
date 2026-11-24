@@ -3,9 +3,13 @@
 import {useRef, useState} from 'react'
 import {Button, Card, Flex, Stack, Text} from '@sanity/ui'
 import {PatchEvent, set, unset, useClient, useFormValue, type ObjectInputProps} from 'sanity'
+import {patchTitleIfEmpty, routeTitleFallback, titleFromCoordinates} from '@/lib/auto-title'
+import {postReverseGeocodePlace} from '@/lib/reverse-geocode-client'
+import {plausibleTime} from '@/lib/bulk-upload'
+import {linkPhotosToRouteDocument} from '@/lib/link-route-photos'
 import {prepareRouteDisplayFields} from '@/lib/simplify-route'
 import {lineCoordinates} from '../../lib/sanity/types'
-import {parseGpxToLine} from '../lib/parseGpx'
+import {readGpx} from '../lib/parseGpx'
 
 type FileValue = {
   asset?: {_ref: string}
@@ -16,18 +20,21 @@ export function GpxInput(props: ObjectInputProps) {
   const fileValue = value as FileValue | undefined
   const client = useClient({apiVersion: '2026-01-01'})
   const documentId = useFormValue(['_id']) as string | undefined
+  const currentTitle = useFormValue(['title']) as string | undefined
   const route = useFormValue(['route']) as {coordinates?: unknown} | undefined
   const [message, setMessage] = useState<'idle' | 'ok' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [linkedNote, setLinkedNote] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const hasFile = Boolean(fileValue?.asset?._ref)
   const hasRoute = lineCoordinates(route).length >= 2
 
   async function onFile(file: File) {
     setError(null)
+    setLinkedNote(null)
     try {
       const text = await file.text()
-      const line = parseGpxToLine(text)
+      const gpx = readGpx(text)
       const asset = await client.assets.upload('file', file, {filename: file.name})
       props.onChange(
         PatchEvent.from(
@@ -39,15 +46,46 @@ export function GpxInput(props: ObjectInputProps) {
       )
       if (documentId) {
         const draftId = documentId.startsWith('drafts.') ? documentId : `drafts.${documentId}`
-        const {displayCoordinates, distanceMeters} = prepareRouteDisplayFields(line.coordinates)
-        await client.patch(draftId).set({
-          route: {
-            type: 'LineString',
-            coordinates: JSON.stringify(line.coordinates),
-          },
-          displayCoordinates,
-          distanceMeters,
-        }).commit()
+        const {displayCoordinates, distanceMeters} = prepareRouteDisplayFields(gpx.coordinates)
+        const fallback = routeTitleFallback(gpx.name, file.name)
+        let suggestedTitle: string | undefined
+        if (!currentTitle?.trim()) {
+          const start = gpx.coordinates[0]
+          const token = client.config().token
+          if (start && token) {
+            const [lng, lat] = start
+            suggestedTitle = await titleFromCoordinates(lat, lng, (la, ln) => postReverseGeocodePlace(la, ln, token), fallback)
+          } else {
+            suggestedTitle = fallback
+          }
+        }
+        const startedAt = plausibleTime(gpx.time ? new Date(gpx.time) : null)
+        const endedAt = plausibleTime(gpx.endTime ? new Date(gpx.endTime) : null)
+        await client
+          .patch(draftId)
+          .set({
+            ...patchTitleIfEmpty(currentTitle, suggestedTitle),
+            ...(startedAt ? {startedAt} : {}),
+            route: {
+              type: 'LineString',
+              coordinates: JSON.stringify(gpx.coordinates),
+            },
+            displayCoordinates,
+            distanceMeters,
+          })
+          .commit()
+        if (startedAt && endedAt) {
+          const {linkedCount} = await linkPhotosToRouteDocument(
+            client,
+            draftId,
+            startedAt,
+            endedAt,
+            gpx.coordinates,
+          )
+          if (linkedCount > 0) {
+            setLinkedNote(`Linked ${linkedCount} photo${linkedCount === 1 ? '' : 's'} to this route.`)
+          }
+        }
       }
       setMessage('ok')
     } catch (caught) {
@@ -99,6 +137,11 @@ export function GpxInput(props: ObjectInputProps) {
           </Text>
         ) : null}
       </Flex>
+      {linkedNote ? (
+        <Text size={1} muted>
+          {linkedNote}
+        </Text>
+      ) : null}
       {message === 'ok' ? (
         <Card padding={3} radius={2} tone="positive">
           <Text size={1}>Got the route. Publish to put it on the map.</Text>

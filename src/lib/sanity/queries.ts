@@ -14,6 +14,20 @@ export const mapQuery = defineQuery(`{
     },
     photo
   },
+  "flights": *[_type == "flight" && defined(displayCoordinates) && displayCoordinates != "[]"] | order(startedAt desc) {
+    _id,
+    title,
+    startedAt,
+    place,
+    durationSeconds,
+    distanceMeters,
+    maxHeightMeters,
+    aircraft,
+    "path": {
+      "type": "LineString",
+      "coordinates": displayCoordinates
+    }
+  },
   "pins": *[_type == "photo" && defined(location.lat) && defined(location.lng) && defined(image.asset)] | order(_id asc) {
     _id,
     legacyId,
