@@ -168,6 +168,15 @@ function spikeFilter(samples: FlightSeriesSample[]): FlightSeriesSample[] {
   return out
 }
 
+/** Flight length from telemetry times (handles osd.flyTime not starting at 0). */
+export function durationFromTimeSeries(samples: {t: number}[]): number {
+  if (samples.length === 0) return 0
+  const times = samples.map((s) => s.t)
+  const min = Math.min(...times)
+  const max = Math.max(...times)
+  return max - min
+}
+
 function downsampleToHz(samples: FlightSeriesSample[], hz = 1): FlightSeriesSample[] {
   if (samples.length === 0) return []
   const sorted = [...samples].sort((a, b) => a.t - b.t)
@@ -262,8 +271,9 @@ export async function parseFlightLogBytes(
   }
 
   const hasGps = track.length >= 2
+  const seriesSpan = durationFromTimeSeries(rawSamples)
   const durationSeconds =
-    rawSamples.length > 0 ? Math.max(...rawSamples.map((s) => s.t)) : (details.totalTime ?? 0)
+    seriesSpan > 0 ? seriesSpan : rawSamples.length > 0 ? Math.max(...rawSamples.map((s) => s.t)) : (details.totalTime ?? 0)
   const distanceMeters = hasGps ? lineLengthMeters(track) : 0
   const {displayCoordinates} = hasGps
     ? prepareRouteDisplayFields(track)

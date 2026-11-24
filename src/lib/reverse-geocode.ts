@@ -54,15 +54,16 @@ export function pickLocalityLabel(data: NominatimReverse): string | undefined {
   const addr = data.address
   if (!addr) return shortenPlace(data.display_name)
 
+  // Urban pockets first, then town-scale, hamlet last (DJI takeoffs often sit in named hamlets / peaks).
   const localityKeys = [
     'neighbourhood',
     'suburb',
-    'city_district',
     'quarter',
-    'hamlet',
+    'city_district',
     'village',
     'town',
     'city',
+    'hamlet',
     'municipality',
   ] as const
 

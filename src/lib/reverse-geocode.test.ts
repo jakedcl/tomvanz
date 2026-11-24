@@ -12,6 +12,15 @@ describe('pickLocalityLabel', () => {
     expect(label).toBe('Palenville, New York')
   })
 
+  it('prefers town over hamlet (e.g. Saugerties vs Blue Mountain)', () => {
+    const label = pickLocalityLabel({
+      name: 'Blue Mountain',
+      addresstype: 'peak',
+      address: {hamlet: 'Blue Mountain', town: 'Saugerties', state: 'New York'},
+    })
+    expect(label).toBe('Saugerties, New York')
+  })
+
   it('uses neighbourhood when present', () => {
     const label = pickLocalityLabel({
       name: 'Something else',
