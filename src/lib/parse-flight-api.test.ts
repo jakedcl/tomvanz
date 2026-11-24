@@ -1,6 +1,41 @@
-import {describe, expect, it} from 'vitest'
+import {describe, expect, it, vi} from 'vitest'
 
-import {flightStudioPatchFromParse} from './parse-flight-api'
+import {
+  enrichParseFlightPlace,
+  flightStudioPatchFromParse,
+  needsClientPlaceFallback,
+} from './parse-flight-api'
+
+describe('enrichParseFlightPlace', () => {
+  const base = {
+    defaultTitle: 'Flight',
+    durationSeconds: 120,
+    distanceMeters: 100,
+    maxHeightMeters: 50,
+    aircraft: 'DJI Mini 3',
+    displayCoordinates: '[[-74.0,40.58]]',
+    series: '[]',
+    videoSegments: [],
+    home: {lat: 40.58, lng: -74},
+  }
+
+  it('fills place and title when server returned Flight fallback', async () => {
+    const geocode = vi.fn(async () => 'Todt Hill')
+    const enriched = await enrichParseFlightPlace(base, geocode)
+    expect(geocode).toHaveBeenCalledWith(40.58, -74)
+    expect(enriched.place).toBe('Todt Hill')
+    expect(enriched.defaultTitle).toBe('Todt Hill')
+  })
+
+  it('leaves parse unchanged when place already set', async () => {
+    const geocode = vi.fn(async () => 'Should not run')
+    const parsed = {...base, place: 'Emerson Hill', defaultTitle: 'Emerson Hill'}
+    expect(needsClientPlaceFallback(parsed)).toBe(false)
+    const enriched = await enrichParseFlightPlace(parsed, geocode)
+    expect(geocode).not.toHaveBeenCalled()
+    expect(enriched.defaultTitle).toBe('Emerson Hill')
+  })
+})
 
 describe('flightStudioPatchFromParse', () => {
   it('fills map and stats fields from parse payload', () => {

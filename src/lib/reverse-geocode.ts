@@ -36,8 +36,14 @@ export const NYC_BOROUGH_NAMES = new Set([
 
 const MUNICIPAL_PREFIX = /^(town of|city of|village of|township of)\s+/i
 
+const GEOCODE_RETRY_DELAY_MS = 1500
+
 /** Bump when label selection rules change so cached strings refresh. */
 const GEOCODE_CACHE_VERSION = 'v3'
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 /** ~110 m grid — good enough for takeoff labels without hammering Nominatim. */
 export function geocodeCacheKey(lat: number, lng: number): string {
@@ -168,30 +174,37 @@ function fallbackFromDisplayName(raw?: string): string | undefined {
   return acceptPlaceName(first)
 }
 
+async function nominatimReverseOnce(lat: number, lng: number): Promise<string | undefined> {
+  const url = new URL('https://nominatim.openstreetmap.org/reverse')
+  url.searchParams.set('lat', String(lat))
+  url.searchParams.set('lon', String(lng))
+  url.searchParams.set('format', 'json')
+  url.searchParams.set('zoom', '14')
+  url.searchParams.set('addressdetails', '1')
+
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': USER_AGENT,
+      Accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(8000),
+  })
+  if (response.status === 429 || response.status >= 500) return undefined
+  if (!response.ok) return undefined
+  const data = (await response.json()) as NominatimReverse
+  return pickLocalityLabel(data)
+}
+
 export async function reverseGeocodePlace(lat: number, lng: number): Promise<string | undefined> {
   const key = geocodeCacheKey(lat, lng)
   const cached = cache.get(key)
   if (cached) return cached
 
-  const result = await schedule(async () => {
-    const url = new URL('https://nominatim.openstreetmap.org/reverse')
-    url.searchParams.set('lat', String(lat))
-    url.searchParams.set('lon', String(lng))
-    url.searchParams.set('format', 'json')
-    url.searchParams.set('zoom', '14')
-    url.searchParams.set('addressdetails', '1')
-
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': USER_AGENT,
-        Accept: 'application/json',
-      },
-      signal: AbortSignal.timeout(8000),
-    })
-    if (!response.ok) return undefined
-    const data = (await response.json()) as NominatimReverse
-    return pickLocalityLabel(data)
-  })
+  let result = await schedule(() => nominatimReverseOnce(lat, lng))
+  if (!result) {
+    await sleep(GEOCODE_RETRY_DELAY_MS)
+    result = await schedule(() => nominatimReverseOnce(lat, lng))
+  }
 
   if (result) cache.set(key, result)
   return result

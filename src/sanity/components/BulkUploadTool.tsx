@@ -26,7 +26,7 @@ import {linkPhotosToFlightDocument} from '../../lib/link-flight-photos'
 import {linkPhotosToRouteDocument} from '../../lib/link-route-photos'
 import {postReverseGeocodePlace} from '../../lib/reverse-geocode-client'
 import {photoLinkWindow} from '../../lib/flight-photo-link'
-import {postParseFlight, type ParseFlightApiResponse} from '../../lib/parse-flight-api'
+import {enrichParseFlightPlace, postParseFlight, type ParseFlightApiResponse} from '../../lib/parse-flight-api'
 import {effectiveTakenAt} from '../../lib/photo-taken-at'
 import {lineLengthMeters} from '../../lib/simplify-route'
 import {readGpx} from '../lib/parseGpx'
@@ -97,7 +97,7 @@ type Row = {
 }
 
 const CONCURRENCY = 3
-const PARSE_CONCURRENCY = 2
+const PARSE_CONCURRENCY = 1
 const METERS_PER_MILE = 1609.344
 
 const STATUS_LABEL: Record<Status, string> = {
@@ -210,7 +210,8 @@ export function BulkUploadTool() {
     parseFlightLog: async (file) => {
       const token = client.config().token
       if (!token) throw new Error('Sign in to Studio to parse flight logs.')
-      return postParseFlight(file, token)
+      const parsed = await postParseFlight(file, token)
+      return enrichParseFlightPlace(parsed, (lat, lng) => postReverseGeocodePlace(lat, lng, token))
     },
     reverseGeocodePlace: async (lat, lng) => {
       const token = client.config().token

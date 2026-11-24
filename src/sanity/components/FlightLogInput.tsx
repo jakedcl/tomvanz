@@ -5,7 +5,8 @@ import {Button, Card, Flex, Spinner, Stack, Text} from '@sanity/ui'
 import {PatchEvent, set, unset, useClient, useFormValue, type ObjectInputProps} from 'sanity'
 import {isShortFlightDuration} from '@/lib/bulk-upload'
 import {linkPhotosToFlightDocument} from '@/lib/link-flight-photos'
-import {flightStudioPatchFromParse, postParseFlight} from '@/lib/parse-flight-api'
+import {enrichParseFlightPlace, flightStudioPatchFromParse, postParseFlight} from '@/lib/parse-flight-api'
+import {postReverseGeocodePlace} from '@/lib/reverse-geocode-client'
 
 type FileValue = {
   asset?: {_ref: string}
@@ -41,7 +42,8 @@ export function FlightLogInput(props: ObjectInputProps) {
       const token = client.config().token
       if (!token) throw new Error('Sign in to Studio to parse flight logs.')
 
-      const parsed = await postParseFlight(file, token)
+      let parsed = await postParseFlight(file, token)
+      parsed = await enrichParseFlightPlace(parsed, (lat, lng) => postReverseGeocodePlace(lat, lng, token))
       const asset = await client.assets.upload('file', file, {filename: file.name})
       props.onChange(
         PatchEvent.from(
