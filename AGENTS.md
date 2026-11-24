@@ -17,11 +17,11 @@ This Next.js version has breaking changes; check `node_modules/next/dist/docs` b
 
 ## Commands
 
-From the repo root: `npm install && npm run dev`; `npm run build`; `npm run lint`.
+From the repo root: `npm install && npm run dev`; `npm run build`; `npm run lint`; `npm run typegen` after schema or GROQ query changes.
 
 ## Content
 
-Sanity project `lee2r8sa`, dataset `production` (hardcoded in `sanity.config.tsx` / `sanity.cli.ts`). `SANITY_API_READ_TOKEN` is optional. Drafts never show on the map.
+Sanity project and dataset come from `NEXT_PUBLIC_SANITY_PROJECT_ID` and `NEXT_PUBLIC_SANITY_DATASET` (`src/lib/sanity/env.ts`, defaulting to `lee2r8sa` / `production`). `SANITY_API_READ_TOKEN` is optional. Drafts never show on the map.
 
 ## Gotchas
 

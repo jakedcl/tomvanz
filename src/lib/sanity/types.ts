@@ -1,3 +1,6 @@
+/** GROQ result type for {@link mapQuery} (from Sanity TypeGen). */
+export type {MapQueryResult} from './sanity.types'
+
 export type Geopoint = {
   lat: number
   lng: number
@@ -16,6 +19,7 @@ export type TrackDoc = {
   distanceMeters?: number
   photo?: {
     asset?: {_ref: string}
+    alt?: string | null
   }
 }
 
@@ -67,6 +71,7 @@ export type PinDoc = {
   location: Geopoint
   photo?: {
     asset?: {_ref: string}
+    alt?: string | null
   }
 }
 
