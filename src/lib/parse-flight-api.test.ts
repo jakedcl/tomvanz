@@ -6,7 +6,7 @@ describe('flightStudioPatchFromParse', () => {
   it('fills map and stats fields from parse payload', () => {
     const patch = flightStudioPatchFromParse(
       {
-        defaultTitle: 'May 14 · Emerson Hill',
+        defaultTitle: 'Emerson Hill',
         startedAt: '2024-05-14T18:00:00.000Z',
         place: 'Emerson Hill',
         durationSeconds: 420,
@@ -21,11 +21,29 @@ describe('flightStudioPatchFromParse', () => {
       'FlightRecord_2024-05-14.txt',
     )
 
-    expect(patch.title).toBe('May 14 · Emerson Hill')
+    expect(patch.title).toBe('Emerson Hill')
     expect(patch.sourceFilename).toBe('FlightRecord_2024-05-14.txt')
     expect(patch.durationSeconds).toBe(420)
     expect(patch.home).toEqual({_type: 'geopoint', lat: 40.6, lng: -74})
     expect(patch.videoSegments).toEqual([{startSeconds: 10, endSeconds: 90}])
+  })
+
+  it('does not overwrite an existing title', () => {
+    const patch = flightStudioPatchFromParse(
+      {
+        defaultTitle: 'Emerson Hill',
+        durationSeconds: 30,
+        distanceMeters: 0,
+        maxHeightMeters: 0,
+        aircraft: 'Unknown',
+        displayCoordinates: '[]',
+        series: '[]',
+        videoSegments: [],
+      },
+      'log.txt',
+      'Tom’s title',
+    )
+    expect(patch).not.toHaveProperty('title')
   })
 
   it('omits optional fields when absent', () => {

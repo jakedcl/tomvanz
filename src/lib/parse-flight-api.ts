@@ -1,3 +1,4 @@
+import {patchTitleIfEmpty} from './auto-title'
 import type {VideoSegment} from './flight-log'
 
 /** JSON body from `POST /api/parse-flight` (and the shape bulk upload expects). */
@@ -21,9 +22,10 @@ export type ParseFlightApiResponse = {
 export function flightStudioPatchFromParse(
   parsed: ParseFlightApiResponse,
   sourceFilename: string,
+  existingTitle?: string,
 ): Record<string, unknown> {
   return {
-    title: parsed.defaultTitle,
+    ...patchTitleIfEmpty(existingTitle, parsed.defaultTitle),
     ...(parsed.startedAt ? {startedAt: parsed.startedAt} : {}),
     ...(parsed.place ? {place: parsed.place} : {}),
     durationSeconds: parsed.durationSeconds,

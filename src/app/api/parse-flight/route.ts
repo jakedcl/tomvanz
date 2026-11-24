@@ -53,7 +53,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const defaultTitle = formatDefaultTitle(parsed.startedAt, place)
+    const defaultTitle = formatDefaultTitle(place)
 
     return NextResponse.json({
       ...parsed,

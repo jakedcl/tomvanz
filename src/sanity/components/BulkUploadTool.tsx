@@ -18,11 +18,12 @@ import {
   readPhotoMeta,
   routeFromUpload,
   runPool,
-  titleFromFileName,
   type Activity,
   type PhotoMeta,
 } from '../../lib/bulk-upload'
+import {photoTitleFallback, routeTitleFallback, titleFromCoordinates} from '../../lib/auto-title'
 import {linkPhotosToFlightDocument} from '../../lib/link-flight-photos'
+import {postReverseGeocodePlace} from '../../lib/reverse-geocode-client'
 import {photoLinkWindow} from '../../lib/flight-photo-link'
 import {postParseFlight, type ParseFlightApiResponse} from '../../lib/parse-flight-api'
 import {effectiveTakenAt} from '../../lib/photo-taken-at'
@@ -49,6 +50,7 @@ export type UploaderClient = {
   ) => Promise<{unlinkedLabels: string[]}>
   linkPhotoToFlights: (photoId: string, takenAt: string | undefined, fileName: string) => Promise<void>
   parseFlightLog: (file: File) => Promise<ParseFlightApiResponse>
+  reverseGeocodePlace: (lat: number, lng: number) => Promise<string | undefined>
 }
 
 type ParseFlightPayload = ParseFlightApiResponse
@@ -202,6 +204,11 @@ export function BulkUploadTool() {
       const token = client.config().token
       if (!token) throw new Error('Sign in to Studio to parse flight logs.')
       return postParseFlight(file, token)
+    },
+    reverseGeocodePlace: async (lat, lng) => {
+      const token = client.config().token
+      if (!token) return undefined
+      return postReverseGeocodePlace(lat, lng, token)
     },
     linkPhotoToFlights: async (photoId, takenAt, fileName) => {
       const when = effectiveTakenAt(takenAt, fileName)
@@ -424,10 +431,16 @@ export function BulkUploadView({
 
       // Reading the file happens here, before anything is uploaded, so anything missing shows up early.
       for (const {id, file} of photos) {
-        void readPhotoMeta(file).then((meta) => {
+        void readPhotoMeta(file).then(async (meta) => {
+          const fallback = photoTitleFallback(file.name)
+          let title = fallback
+          if (meta.lat != null && meta.lng != null) {
+            title = await titleFromCoordinates(meta.lat, meta.lng, uploader.reverseGeocodePlace, fallback)
+          }
           patchRow(id, {
             status: 'ready',
             meta,
+            title,
             note: meta.lat == null ? 'No GPS in this photo. You’ll need to drop a pin after uploading.' : undefined,
           })
         })
@@ -465,17 +478,24 @@ export function BulkUploadView({
       for (const {id, file} of routes) {
         void file
           .text()
-          .then((text) => {
+          .then(async (text) => {
             const gpx = readGpx(text)
             const route = {
               coordinates: gpx.coordinates,
               startedAt: plausibleTime(gpx.time ? new Date(gpx.time) : null),
             }
+            const fallback = routeTitleFallback(gpx.name, file.name)
+            let title = fallback
+            const start = gpx.coordinates[0]
+            if (start) {
+              const [lng, lat] = start
+              title = await titleFromCoordinates(lat, lng, uploader.reverseGeocodePlace, fallback)
+            }
             patchRow(id, {
               status: 'ready',
               route,
               activity: guessActivity(gpx.type),
-              title: gpx.name ?? titleFromFileName(file.name),
+              title,
               note: routeSummary(route),
             })
           })

@@ -117,8 +117,8 @@ describe('DJI flight logs', () => {
 
   it('builds a Flight document from parsed log fields', () => {
     const doc = flightFromUpload('file-abc-txt', {
-      title: 'May 14 · Emerson Hill',
-      defaultTitle: 'May 14 · Emerson Hill',
+      title: 'Emerson Hill',
+      defaultTitle: 'Emerson Hill',
       durationSeconds: 600,
       distanceMeters: 1200,
       maxHeightMeters: 90,
@@ -131,7 +131,7 @@ describe('DJI flight logs', () => {
       place: 'Emerson Hill',
     })
     expect(doc._type).toBe('flight')
-    expect(doc.title).toBe('May 14 · Emerson Hill')
+    expect(doc.title).toBe('Emerson Hill')
     expect(doc.log.asset._ref).toBe('file-abc-txt')
     expect(doc.distanceMeters).toBe(1200)
   })

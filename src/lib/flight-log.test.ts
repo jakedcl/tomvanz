@@ -22,12 +22,11 @@ describe('durationFromTimeSeries', () => {
 })
 
 describe('formatDefaultTitle', () => {
-  it('joins date and place with a middle dot', () => {
-    expect(formatDefaultTitle('2026-05-14T14:00:00.000Z', 'Emerson Hill')).toMatch(/May 14, 2026 · Emerson Hill/)
+  it('uses place only without a date', () => {
+    expect(formatDefaultTitle('Emerson Hill')).toBe('Emerson Hill')
   })
 
-  it('formats the calendar date in America/New_York', () => {
-    // 2026-05-15 02:00 UTC is still May 14 in New York.
-    expect(formatDefaultTitle('2026-05-15T02:00:00.000Z', undefined)).toBe('May 14, 2026')
+  it('falls back when place is missing', () => {
+    expect(formatDefaultTitle(undefined)).toBe('Flight')
   })
 })

@@ -1,5 +1,6 @@
 import {DJILog, type Frame, type KeychainFeaturePoint} from 'dji-log-parser-js'
 
+import {placeAutoTitle} from './auto-title'
 import {lineLengthMeters, prepareRouteDisplayFields, type LngLat} from './simplify-route'
 
 export type FlightSeriesSample = {
@@ -311,7 +312,7 @@ export async function parseFlightLogBytes(
     home = {lat, lng}
   }
 
-  const defaultTitle = formatDefaultTitle(startedAtResolved, options.place)
+  const defaultTitle = formatDefaultTitle(options.place)
 
   return {
     startedAt: startedAtResolved,
@@ -329,25 +330,9 @@ export async function parseFlightLogBytes(
   }
 }
 
-const TITLE_TIME_ZONE = 'America/New_York'
-
-export function formatDefaultTitle(startedAt?: string, place?: string): string {
-  const parts: string[] = []
-  if (startedAt) {
-    const d = new Date(startedAt)
-    if (!Number.isNaN(d.getTime())) {
-      parts.push(
-        d.toLocaleDateString('en-US', {
-          timeZone: TITLE_TIME_ZONE,
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-        }),
-      )
-    }
-  }
-  if (place?.trim()) parts.push(place.trim())
-  return parts.join(' · ') || 'Flight'
+/** Place-only flight title (no date). */
+export function formatDefaultTitle(place?: string): string {
+  return placeAutoTitle(place, 'Flight')
 }
 
 /** Quick check that a buffer is a DJI log (not an arbitrary text file). */

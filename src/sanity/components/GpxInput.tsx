@@ -3,9 +3,11 @@
 import {useRef, useState} from 'react'
 import {Button, Card, Flex, Stack, Text} from '@sanity/ui'
 import {PatchEvent, set, unset, useClient, useFormValue, type ObjectInputProps} from 'sanity'
+import {patchTitleIfEmpty, routeTitleFallback, titleFromCoordinates} from '@/lib/auto-title'
+import {postReverseGeocodePlace} from '@/lib/reverse-geocode-client'
 import {prepareRouteDisplayFields} from '@/lib/simplify-route'
 import {lineCoordinates} from '../../lib/sanity/types'
-import {parseGpxToLine} from '../lib/parseGpx'
+import {readGpx} from '../lib/parseGpx'
 
 type FileValue = {
   asset?: {_ref: string}
@@ -16,6 +18,7 @@ export function GpxInput(props: ObjectInputProps) {
   const fileValue = value as FileValue | undefined
   const client = useClient({apiVersion: '2026-01-01'})
   const documentId = useFormValue(['_id']) as string | undefined
+  const currentTitle = useFormValue(['title']) as string | undefined
   const route = useFormValue(['route']) as {coordinates?: unknown} | undefined
   const [message, setMessage] = useState<'idle' | 'ok' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -27,7 +30,7 @@ export function GpxInput(props: ObjectInputProps) {
     setError(null)
     try {
       const text = await file.text()
-      const line = parseGpxToLine(text)
+      const gpx = readGpx(text)
       const asset = await client.assets.upload('file', file, {filename: file.name})
       props.onChange(
         PatchEvent.from(
@@ -39,15 +42,31 @@ export function GpxInput(props: ObjectInputProps) {
       )
       if (documentId) {
         const draftId = documentId.startsWith('drafts.') ? documentId : `drafts.${documentId}`
-        const {displayCoordinates, distanceMeters} = prepareRouteDisplayFields(line.coordinates)
-        await client.patch(draftId).set({
-          route: {
-            type: 'LineString',
-            coordinates: JSON.stringify(line.coordinates),
-          },
-          displayCoordinates,
-          distanceMeters,
-        }).commit()
+        const {displayCoordinates, distanceMeters} = prepareRouteDisplayFields(gpx.coordinates)
+        const fallback = routeTitleFallback(gpx.name, file.name)
+        let suggestedTitle: string | undefined
+        if (!currentTitle?.trim()) {
+          const start = gpx.coordinates[0]
+          const token = client.config().token
+          if (start && token) {
+            const [lng, lat] = start
+            suggestedTitle = await titleFromCoordinates(lat, lng, (la, ln) => postReverseGeocodePlace(la, ln, token), fallback)
+          } else {
+            suggestedTitle = fallback
+          }
+        }
+        await client
+          .patch(draftId)
+          .set({
+            ...patchTitleIfEmpty(currentTitle, suggestedTitle),
+            route: {
+              type: 'LineString',
+              coordinates: JSON.stringify(gpx.coordinates),
+            },
+            displayCoordinates,
+            distanceMeters,
+          })
+          .commit()
       }
       setMessage('ok')
     } catch (caught) {

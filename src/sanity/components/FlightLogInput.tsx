@@ -20,6 +20,7 @@ export function FlightLogInput(props: ObjectInputProps) {
   const fileValue = value as FileValue | undefined
   const client = useClient({apiVersion: '2026-01-01'})
   const documentId = useFormValue(['_id']) as string | undefined
+  const currentTitle = useFormValue(['title']) as string | undefined
   const durationSeconds = useFormValue(['durationSeconds']) as number | undefined
   const displayCoordinates = useFormValue(['displayCoordinates']) as string | undefined
   const [message, setMessage] = useState<'idle' | 'ok' | 'error'>('idle')
@@ -52,7 +53,7 @@ export function FlightLogInput(props: ObjectInputProps) {
       )
       if (documentId) {
         const id = draftId(documentId)
-        const fields = flightStudioPatchFromParse(parsed, file.name)
+        const fields = flightStudioPatchFromParse(parsed, file.name, currentTitle)
         await client.patch(id).set(fields).commit()
 
         if (parsed.startedAt) {
