@@ -43,10 +43,12 @@ export function FlightAltitudeChart({flightId, onScrub}: Props) {
   const pick = useCallback(
     (clientX: number) => {
       if (!samples?.length || !svgRef.current) return
+      const times = samples.map((s) => s.t)
+      const tMin = Math.min(...times)
+      const tSpan = Math.max(1, Math.max(...times) - tMin)
       const rect = svgRef.current.getBoundingClientRect()
       const x = ((clientX - rect.left) / rect.width) * W
-      const tMax = samples[samples.length - 1]!.t || 1
-      const targetT = (x / W) * tMax
+      const targetT = tMin + (x / W) * tSpan
       let best = samples[0]!
       let bestDist = Math.abs(best.t - targetT)
       for (const s of samples) {
@@ -67,14 +69,16 @@ export function FlightAltitudeChart({flightId, onScrub}: Props) {
   }
   if (!samples?.length) return null
 
-  const tMax = samples[samples.length - 1]!.t || 1
+  const times = samples.map((s) => s.t)
+  const tMin = Math.min(...times)
+  const tSpan = Math.max(1, Math.max(...times) - tMin)
   const heights = samples.map((s) => s.height)
   const minH = Math.min(...heights)
   const maxH = Math.max(...heights)
   const span = Math.max(1, maxH - minH)
 
   const points = samples.map((s) => {
-    const x = (s.t / tMax) * W
+    const x = ((s.t - tMin) / tSpan) * W
     const y = H - 4 - ((s.height - minH) / span) * (H - 12)
     return `${x.toFixed(1)},${y.toFixed(1)}`
   })
@@ -89,9 +93,9 @@ export function FlightAltitudeChart({flightId, onScrub}: Props) {
   return (
     <div className="mt-3">
       {active ? (
-        <MotionReadout sample={active} formatDuration={formatDuration} />
+        <MotionReadout sample={active} elapsedSeconds={active.t - tMin} formatDuration={formatDuration} />
       ) : (
-        <p className="pb-2 text-[11px] text-black/45">Drag across the chart to scrub the flight path.</p>
+        <p className="pb-2 text-[11px] text-black/45">Hover or drag across the chart to scrub the flight path.</p>
       )}
       <svg
         ref={svgRef}
@@ -104,14 +108,12 @@ export function FlightAltitudeChart({flightId, onScrub}: Props) {
           e.currentTarget.setPointerCapture(e.pointerId)
           pick(e.clientX)
         }}
-        onPointerMove={(e) => {
-          if (e.buttons === 0 && e.pressure === 0) return
-          pick(e.clientX)
-        }}
+        onPointerMove={(e) => pick(e.clientX)}
         onPointerUp={(e) => {
           e.currentTarget.releasePointerCapture(e.pointerId)
         }}
-        onPointerLeave={() => {
+        onPointerLeave={(e) => {
+          if (e.pointerType === 'touch') return
           setActive(null)
           onScrub(null)
         }}
@@ -119,8 +121,8 @@ export function FlightAltitudeChart({flightId, onScrub}: Props) {
         <polyline points={line} fill="none" stroke="#d97706" strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
         {active ? (
           <line
-            x1={(active.t / tMax) * W}
-            x2={(active.t / tMax) * W}
+            x1={((active.t - tMin) / tSpan) * W}
+            x2={((active.t - tMin) / tSpan) * W}
             y1={0}
             y2={H}
             stroke="#000"
@@ -131,7 +133,7 @@ export function FlightAltitudeChart({flightId, onScrub}: Props) {
         ) : null}
       </svg>
       <p className="mt-1 text-[11px] text-black/40">
-        {formatFeet(metersToFeet(minH))} – {formatFeet(metersToFeet(maxH))} · {formatDuration(tMax)}
+        {formatFeet(metersToFeet(minH))} – {formatFeet(metersToFeet(maxH))} · {formatDuration(tSpan)}
       </p>
     </div>
   )
@@ -139,9 +141,11 @@ export function FlightAltitudeChart({flightId, onScrub}: Props) {
 
 function MotionReadout({
   sample,
+  elapsedSeconds,
   formatDuration,
 }: {
   sample: FlightSeriesSample
+  elapsedSeconds: number
   formatDuration: (s: number) => string
 }) {
   return (
@@ -150,7 +154,7 @@ function MotionReadout({
       <Chip label="Speed" value={`${(sample.speed * 2.237).toFixed(1)} mph`} />
       <Chip label="Battery" value={`${Math.round(sample.battery)}%`} />
       {sample.mode ? <Chip label="Mode" value={sample.mode} /> : null}
-      <Chip label="Time" value={formatDuration(sample.t)} />
+      <Chip label="Time" value={formatDuration(elapsedSeconds)} />
     </div>
   )
 }
