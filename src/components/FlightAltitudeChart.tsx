@@ -11,6 +11,8 @@ type Props = {
   /** Document duration — chart footer matches the card chip. */
   durationSeconds?: number
   onScrub: (sample: FlightSeriesSample | null) => void
+  /** When the parent already fetched series, skip a second request. */
+  series?: FlightSeriesSample[] | null
 }
 
 const W = 300
@@ -20,20 +22,22 @@ function metersToFeet(m: number) {
   return m * 3.28084
 }
 
-export function FlightAltitudeChart({flightId, durationSeconds, onScrub}: Props) {
-  const [samples, setSamples] = useState<FlightSeriesSample[] | null>(null)
-  const [done, setDone] = useState(false)
+export function FlightAltitudeChart({flightId, durationSeconds, onScrub, series}: Props) {
+  const [fetched, setFetched] = useState<FlightSeriesSample[] | null>(null)
+  const [done, setDone] = useState(series !== undefined)
+  const samples = series !== undefined ? series : fetched
   const [active, setActive] = useState<FlightSeriesSample | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
 
   useEffect(() => {
+    if (series !== undefined) return
     let cancelled = false
     fetch(`/api/flight/${encodeURIComponent(flightId)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((data: {series: string | null}) => {
         if (cancelled) return
         const parsed = data.series ? (JSON.parse(data.series) as FlightSeriesSample[]) : []
-        setSamples(parsed)
+        setFetched(parsed)
         setDone(true)
       })
       .catch(() => !cancelled && setDone(true))
@@ -41,7 +45,7 @@ export function FlightAltitudeChart({flightId, durationSeconds, onScrub}: Props)
       cancelled = true
       onScrub(null)
     }
-  }, [flightId, onScrub])
+  }, [flightId, onScrub, series])
 
   const pick = useCallback(
     (clientX: number) => {
@@ -68,7 +72,7 @@ export function FlightAltitudeChart({flightId, durationSeconds, onScrub}: Props)
   )
 
   if (!done) {
-    return <div className="mt-3 h-[120px] animate-pulse rounded-xl bg-black/[0.05]" aria-hidden />
+    return <div className="h-[52px] animate-pulse rounded-lg bg-black/[0.05]" aria-hidden />
   }
   if (!samples?.length) return null
 
@@ -92,17 +96,15 @@ export function FlightAltitudeChart({flightId, durationSeconds, onScrub}: Props)
     formatDurationSeconds(durationSeconds ?? tSpan) ?? formatElapsed(tSpan)
 
   return (
-    <div className="mt-3">
+    <div>
       {active ? (
         <MotionReadout sample={active} elapsedSeconds={active.t - tMin} formatDuration={formatElapsed} />
-      ) : (
-        <p className="pb-2 text-[11px] text-black/45">Hover or drag across the chart to scrub the flight path.</p>
-      )}
+      ) : null}
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
-        className="h-[72px] w-full cursor-crosshair touch-none"
+        className="h-[52px] w-full cursor-crosshair touch-none"
         role="img"
         aria-label="Flight altitude over time"
         onPointerDown={(e) => {

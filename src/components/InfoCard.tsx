@@ -16,6 +16,11 @@ import {infoCardCoverImage, infoCardLightboxImage, sanityImageAlt, urlFor} from 
 import {lineCoordinates, type MapData, type SelectedItem} from '@/lib/sanity/types'
 import {formatDurationSeconds} from '@/lib/format-duration'
 import {formatMapDate} from '@/lib/format-map-date'
+import {
+  dominantFlightModePill,
+  formatSpeedMph,
+  maxSpeedMphFromSeries,
+} from '@/lib/flight-display'
 import {trackColor} from '@/lib/track-color'
 
 type Props = {
@@ -164,6 +169,7 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: 
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const [linkedPhotos, setLinkedPhotos] = useState<LinkedPhoto[]>([])
+  const [flightSeries, setFlightSeries] = useState<FlightSeriesSample[] | null>(null)
   const track = selected.kind === 'track' ? data.tracks.find((item) => item._id === selected.id) : undefined
   const flight = selected.kind === 'flight' ? data.flights.find((item) => item._id === selected.id) : undefined
   const routeCoords = useMemo(() => (track ? lineCoordinates(track.route) : null), [track])
@@ -178,10 +184,27 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: 
     let cancelled = false
     fetch(path)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((payload: {photos: LinkedPhoto[]}) => {
-        if (!cancelled) setLinkedPhotos(payload.photos ?? [])
+      .then((payload: {photos?: LinkedPhoto[]; series?: string | null}) => {
+        if (cancelled) return
+        setLinkedPhotos(payload.photos ?? [])
+        if (selected.kind === 'flight') {
+          if (payload.series) {
+            try {
+              setFlightSeries(JSON.parse(payload.series) as FlightSeriesSample[])
+            } catch {
+              setFlightSeries([])
+            }
+          } else {
+            setFlightSeries([])
+          }
+        }
       })
-      .catch(() => !cancelled && setLinkedPhotos([]))
+      .catch(() => {
+        if (!cancelled) {
+          setLinkedPhotos([])
+          if (selected.kind === 'flight') setFlightSeries([])
+        }
+      })
     return () => {
       cancelled = true
     }
@@ -225,154 +248,186 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: 
   }
 
   const frame =
-    'tv-card tv-sheet w-full max-h-[min(70vh,560px)] overflow-y-auto overflow-x-hidden rounded-t-[22px] bg-white shadow-[0_-8px_40px_rgba(0,0,0,0.22)] ring-1 ring-black/5 md:rounded-[22px] md:shadow-[0_24px_64px_rgba(0,0,0,0.28)]'
+    'tv-card tv-sheet w-full max-h-[min(42vh,240px)] overflow-y-auto overflow-x-hidden rounded-t-[18px] bg-white shadow-[0_-6px_28px_rgba(0,0,0,0.18)] ring-1 ring-black/5 md:rounded-[18px] md:shadow-[0_16px_48px_rgba(0,0,0,0.22)]'
 
-  // An untitled photo leads with its date instead of leaving a blank headline.
   const untitled = card.title.trim() === ''
   const headline = untitled ? (card.stats[0] ?? '') : card.title
-  const chips = untitled ? card.stats.slice(1) : card.stats
+  const baseChips = untitled ? card.stats.slice(1) : card.stats
   const hasRoute = Boolean(routeCoords && routeCoords.length >= 2)
   const isFlight = selected.kind === 'flight' && Boolean(flight)
+  const topSpeed =
+    isFlight && flightSeries && flightSeries.length > 0 ? maxSpeedMphFromSeries(flightSeries) : null
+  const modePill =
+    isFlight && flightSeries && flightSeries.length > 0 ? dominantFlightModePill(flightSeries) : null
+  const chips = [
+    ...baseChips,
+    ...(topSpeed != null ? [formatSpeedMph(topSpeed)] : []),
+    ...(modePill ? [modePill] : []),
+  ]
   const linkedForSelection =
     selected.kind === 'flight' || selected.kind === 'track' ? linkedPhotos : []
-  const hasDetails =
-    chips.length > 0 || Boolean(card.body) || hasRoute || isFlight || linkedForSelection.length > 0
-  const hasCaption = Boolean(headline) || Boolean(card.eyebrow)
+  const thumbSrc = cover
+    ? cover.src
+    : null
 
   return (
     <article className={frame}>
-      <div className="relative aspect-[4/3] overflow-hidden bg-neutral-200 md:rounded-t-[22px]">
-        {cover ? (
-          <button
-            type="button"
-            onClick={() => setExpanded(true)}
-            aria-label="View photo full size"
-            className="block h-full w-full cursor-zoom-in"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={cover.src}
-              srcSet={cover.srcSet}
-              sizes={cover.sizes}
-              alt={card.imageAlt}
-              className="h-full w-full object-cover transition-transform duration-500 hover:scale-[1.03]"
-            />
-          </button>
-        ) : (
-          <div
-            className="absolute inset-0"
-            style={{background: `linear-gradient(160deg, ${card.accent} 0%, #1a1a1a 78%)`}}
-          >
-            <svg viewBox="0 0 300 225" className="absolute inset-0 h-full w-full opacity-30" aria-hidden>
-              <path
-                d="M18 160 C70 50, 120 170, 170 80 S250 50, 286 130"
-                fill="none"
-                stroke="white"
-                strokeWidth="6"
-                strokeLinecap="round"
-                strokeDasharray={card.dashed ? '14 12' : undefined}
-              />
-            </svg>
-          </div>
-        )}
-
-        {hasCaption ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/75 via-black/30 to-transparent" />
-        ) : null}
-
-
-        <button
-          type="button"
-          onClick={share}
-          aria-label="Share link"
-          className="absolute left-3 top-3 flex h-9 items-center gap-1.5 rounded-full bg-black/35 px-3 text-[12px] font-semibold text-white backdrop-blur-md transition hover:bg-black/50 active:scale-95"
-        >
-          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M12 3v12M12 3l-4 4M12 3l4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" />
-          </svg>
-          {copied ? 'Link copied' : 'Share'}
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-black/35 text-white backdrop-blur-md transition hover:bg-black/50 active:scale-95"
-        >
-          <CloseIcon className="h-4 w-4" />
-        </button>
-
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 p-4 text-white">
-          <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/75">
-            {card.isPhoto ? <PhotoShape className="h-3.5 w-3.5 text-white" /> : null}
-            {card.eyebrow}
-          </p>
-          {headline ? (
-            <h2 className="mt-1 text-[24px] font-bold leading-[1.1] tracking-tight [text-shadow:0_1px_12px_rgba(0,0,0,0.35)]">
-              {headline}
-            </h2>
+      <div className="flex gap-3 p-3">
+        <StripThumb accent={card.accent} dashed={card.dashed} hasCover={Boolean(thumbSrc)} onOpen={() => setExpanded(true)}>
+          {thumbSrc ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={thumbSrc} alt={card.imageAlt} className="h-full w-full object-cover" />
           ) : null}
+        </StripThumb>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-black/45">
+                {card.isPhoto ? <PhotoShape className="h-3 w-3" /> : null}
+                {card.eyebrow}
+              </p>
+              {headline ? (
+                <h2 className="mt-0.5 truncate text-[17px] font-bold leading-tight tracking-tight text-black">
+                  {headline}
+                </h2>
+              ) : null}
+              {chips.length > 0 ? (
+                <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-black/60">{chips.join(' · ')}</p>
+              ) : null}
+              {card.body ? (
+                <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-black/65">{card.body}</p>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 gap-1">
+              <button
+                type="button"
+                onClick={share}
+                aria-label="Share link"
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.06] text-black/70 active:scale-95"
+              >
+                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+                  <path d="M12 3v12M12 3l-4 4M12 3l4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close"
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.06] text-black/70 active:scale-95"
+              >
+                <CloseIcon className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
         </div>
       </div>
-
-      {hasDetails ? (
-        <div className="px-4 pb-4 pt-3.5">
-          {chips.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
-              {chips.map((stat) => (
-                <span
-                  key={stat}
-                  className="rounded-full bg-black/[0.06] px-3 py-1 text-[12px] font-medium text-black/70"
-                >
-                  {stat}
-                </span>
-              ))}
-            </div>
-          ) : null}
-          {card.body ? (
-            <p className={`${chips.length ? 'mt-3' : ''} text-[14px] leading-relaxed text-black/70`}>
-              {card.body}
-            </p>
-          ) : null}
-          {linkedForSelection.length > 0 ? (
-            <div className={`${chips.length || card.body ? 'mt-3' : ''} flex gap-2 overflow-x-auto pb-1`}>
-              {linkedForSelection.map((item) => {
-                const thumb = item.photo?.asset
-                  ? urlFor(item.photo).width(160).height(120).fit('crop').url()
-                  : null
-                return (
-                  <button
-                    key={item._id}
-                    type="button"
-                    onClick={() => onOpenPhoto?.(item._id)}
-                    className="h-16 w-20 shrink-0 overflow-hidden rounded-lg ring-1 ring-black/10"
-                    aria-label={item.title?.trim() || 'Linked photo'}
-                  >
-                    {thumb ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={thumb} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <span className="flex h-full items-center justify-center bg-neutral-200 text-[10px] text-black/50">Photo</span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-          ) : null}
-          {hasRoute && routeCoords ? <ElevationChart coords={routeCoords} color={card.accent} /> : null}
-          {isFlight && flight && onFlightScrub ? (
-            <FlightAltitudeChart
-              key={flight._id}
-              flightId={flight._id}
-              durationSeconds={flight.durationSeconds}
-              onScrub={onFlightScrub}
-            />
-          ) : null}
+      {linkedForSelection.length > 0 ? (
+        <div className="flex gap-1.5 overflow-x-auto px-3 pb-2">
+          {linkedForSelection.map((item) => {
+            const thumb = item.photo?.asset ? urlFor(item.photo).width(120).height(90).fit('crop').url() : null
+            return (
+              <button
+                key={item._id}
+                type="button"
+                onClick={() => onOpenPhoto?.(item._id)}
+                className="h-12 w-14 shrink-0 overflow-hidden rounded-md ring-1 ring-black/10"
+                aria-label={item.title?.trim() || 'Linked photo'}
+              >
+                {thumb ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={thumb} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <span className="flex h-full items-center justify-center bg-neutral-200 text-[9px] text-black/50">Photo</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
+      {hasRoute && routeCoords ? (
+        <div className="px-3 pb-2">
+          <ElevationChart coords={routeCoords} color={card.accent} />
+        </div>
+      ) : null}
+      {isFlight && flight && onFlightScrub ? (
+        <div className="px-3 pb-2.5">
+          <FlightAltitudeChart
+            key={flight._id}
+            flightId={flight._id}
+            durationSeconds={flight.durationSeconds}
+            onScrub={onFlightScrub}
+            series={flightSeries}
+          />
         </div>
       ) : null}
 
       {expanded && card.image ? (
         <Lightbox image={card.image} alt={card.imageAlt} onClose={() => setExpanded(false)} />
       ) : null}
+      {copied ? <p className="sr-only" role="status">Link copied</p> : null}
     </article>
+  )
+}
+
+function StripThumb({
+  accent,
+  dashed,
+  hasCover,
+  children,
+  onOpen,
+}: {
+  accent: string
+  dashed: boolean
+  hasCover: boolean
+  children?: React.ReactNode
+  onOpen?: () => void
+}) {
+  const inner = (
+    <StripThumbArt accent={accent} dashed={dashed}>
+      {children}
+    </StripThumbArt>
+  )
+  if (hasCover && onOpen) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label="View photo full size"
+        className="h-[72px] w-[72px] shrink-0 overflow-hidden rounded-xl bg-neutral-200 ring-1 ring-black/10"
+      >
+        {inner}
+      </button>
+    )
+  }
+  return (
+    <div className="h-[72px] w-[72px] shrink-0 overflow-hidden rounded-xl ring-1 ring-black/10" aria-hidden>
+      {inner}
+    </div>
+  )
+}
+
+function StripThumbArt({
+  accent,
+  dashed,
+  children,
+}: {
+  accent: string
+  dashed: boolean
+  children?: React.ReactNode
+}) {
+  if (children) return children
+  return (
+    <div className="h-full w-full" style={{background: `linear-gradient(160deg, ${accent} 0%, #1a1a1a 78%)`}}>
+      <svg viewBox="0 0 72 72" className="h-full w-full opacity-35" aria-hidden>
+        <path
+          d="M6 48 C22 18, 34 52, 44 26 S58 16, 66 38"
+          fill="none"
+          stroke="white"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray={dashed ? '5 4' : undefined}
+        />
+      </svg>
+    </div>
   )
 }
