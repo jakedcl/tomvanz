@@ -165,8 +165,7 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
           key={searchKey}
           state={mapFilters}
           onChange={setMapFilters}
-          typeOptions={options.typeOptions}
-          hasDrone={options.hasDrone}
+          filterGroups={options}
           results={results}
           total={allData.pins.length + allData.tracks.length + allData.flights.length}
           onPick={pickResult}

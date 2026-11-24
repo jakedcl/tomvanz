@@ -10,23 +10,39 @@ import {trackColor} from '@/lib/track-color'
 import {
   activeFilterCount,
   emptyMapFilters,
+  flightType,
   type MapFilterState,
   type ResultItem,
   type TypeOption,
 } from '@/lib/map-filters'
 import {formatMapDate} from '@/lib/format-map-date'
 
+type FilterGroups = {
+  groups: TypeOption[]
+  routeKinds: TypeOption[]
+  aircraftChips: TypeOption[]
+  hasDrone: boolean
+}
+
 type Props = {
   state: MapFilterState
   onChange: (next: MapFilterState) => void
-  typeOptions: TypeOption[]
-  hasDrone: boolean
+  filterGroups: FilterGroups
   results: ResultItem[]
   total: number
   onPick: (item: ResultItem) => void
 }
 
-export function MapSearch({state, onChange, typeOptions, hasDrone, results, total, onPick}: Props) {
+export function MapSearch({state, onChange, filterGroups, results, total, onPick}: Props) {
+  const {groups, routeKinds, aircraftChips, hasDrone} = filterGroups
+  const showRouteKinds =
+    routeKinds.length > 0 &&
+    (state.types.includes('track:all') || routeKinds.some((option) => state.types.includes(option.value)))
+  const showAircraft =
+    aircraftChips.length > 0 &&
+    (state.types.includes(flightType()) ||
+      state.types.includes('flight:all') ||
+      aircraftChips.some((option) => state.types.includes(option.value)))
   const [open, setOpen] = useState(false)
   const count = activeFilterCount(state)
 
@@ -81,14 +97,14 @@ export function MapSearch({state, onChange, typeOptions, hasDrone, results, tota
           </div>
 
           <div className="space-y-2.5 px-4 pb-3">
-            {typeOptions.length > 1 || hasDrone ? (
+            {groups.length > 0 || hasDrone ? (
               <Chips>
                 {hasDrone ? (
                   <Chip active={state.drone} onClick={() => onChange({...state, drone: !state.drone})}>
-                    Drone
+                    Aerial
                   </Chip>
                 ) : null}
-                {typeOptions.map((option) => (
+                {groups.map((option) => (
                   <Chip
                     key={option.value}
                     active={state.types.includes(option.value)}
@@ -97,6 +113,28 @@ export function MapSearch({state, onChange, typeOptions, hasDrone, results, tota
                     {option.label}
                   </Chip>
                 ))}
+                {showRouteKinds
+                  ? routeKinds.map((option) => (
+                      <Chip
+                        key={option.value}
+                        active={state.types.includes(option.value)}
+                        onClick={() => toggleType(option.value)}
+                      >
+                        {option.label}
+                      </Chip>
+                    ))
+                  : null}
+                {showAircraft
+                  ? aircraftChips.map((option) => (
+                      <Chip
+                        key={option.value}
+                        active={state.types.includes(option.value)}
+                        onClick={() => toggleType(option.value)}
+                      >
+                        {option.label}
+                      </Chip>
+                    ))
+                  : null}
               </Chips>
             ) : null}
             <div className="flex items-center justify-between gap-2">
