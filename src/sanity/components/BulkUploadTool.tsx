@@ -4,14 +4,33 @@ import {useCallback, useEffect, useRef, useState} from 'react'
 import {Badge, Box, Button, Card, Flex, Spinner, Stack, Text, TextInput} from '@sanity/ui'
 import {useClient} from 'sanity'
 import {useRouter} from 'sanity/router'
-import {isPhotoFile, photoFromUpload, readPhotoMeta, runPool, type PhotoMeta} from '../../lib/bulk-upload'
+import {
+  ACTIVITIES,
+  guessActivity,
+  isGpxFile,
+  isPhotoFile,
+  photoFromUpload,
+  plausibleTime,
+  readPhotoMeta,
+  routeFromUpload,
+  runPool,
+  titleFromFileName,
+  type Activity,
+  type PhotoMeta,
+} from '../../lib/bulk-upload'
+import {lineLengthMeters} from '../../lib/simplify-route'
+import {readGpx} from '../lib/parseGpx'
 
 /** The little the uploader needs from the Studio's connection to Sanity. */
 export type UploaderClient = {
   uploadImage: (file: File) => Promise<{_id: string}>
+  uploadFile: (file: File) => Promise<{_id: string}>
   /** The id of a photo already using this image, if any. */
   findByAsset: (assetId: string) => Promise<string | null>
+  /** The id of a route already using this GPX file, if any. */
+  findRouteByAsset: (assetId: string) => Promise<string | null>
   createPhoto: (doc: ReturnType<typeof photoFromUpload>) => Promise<{_id: string}>
+  createRoute: (doc: ReturnType<typeof routeFromUpload>) => Promise<{_id: string}>
 }
 
 type Status = 'reading' | 'ready' | 'waiting' | 'uploading' | 'done' | 'no-location' | 'duplicate' | 'skipped' | 'error'
@@ -19,17 +38,23 @@ type Status = 'reading' | 'ready' | 'waiting' | 'uploading' | 'done' | 'no-locat
 type Row = {
   id: number
   name: string
+  kind: 'photo' | 'route'
   status: Status
   note?: string
   docId?: string
-  /** A small picture of the file, so the right title goes on the right photo. */
+  /** Photos: a small picture of the file, so the right title goes on the right photo. */
   preview?: string
-  /** What was read from the file (GPS, date taken). */
+  /** Photos: what was read from the file (GPS, date taken). */
   meta?: PhotoMeta
+  /** Routes: the line and start time read from the GPX. */
+  route?: {coordinates: [number, number][]; startedAt?: string}
+  /** Routes: bike, hike or other. Left empty when the file doesn't say, so it's chosen on purpose. */
+  activity?: Activity
   title: string
 }
 
 const CONCURRENCY = 3
+const METERS_PER_MILE = 1609.344
 
 const STATUS_LABEL: Record<Status, string> = {
   reading: 'Reading',
@@ -55,8 +80,35 @@ const STATUS_TONE: Record<Status, 'default' | 'positive' | 'caution' | 'critical
   error: 'critical',
 }
 
-/** Rows whose title can still be changed or that can still be taken off the list. */
+/** Rows whose details can still be changed or that can still be taken off the list. */
 const editable = (row: Row) => row.status === 'ready' || row.status === 'error'
+
+/** What a route still needs before it can be uploaded (photos need nothing). */
+function missingDetails(row: Row): string | undefined {
+  if (row.kind !== 'route' || !editable(row)) return undefined
+  if (!row.title.trim()) return 'Add a title.'
+  if (!row.activity) return 'Pick bike, hike or other.'
+  return undefined
+}
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
+
+function routeSummary(route: NonNullable<Row['route']>) {
+  const miles = lineLengthMeters(route.coordinates) / METERS_PER_MILE
+  const parts = [`${miles.toFixed(1)} mi`]
+  if (route.startedAt) {
+    parts.push(new Date(route.startedAt).toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'}))
+  }
+  return parts.join(' · ')
+}
+
+const RouteIcon = () => (
+  <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <circle cx="6" cy="18" r="2" />
+    <circle cx="18" cy="6" r="2" />
+    <path d="M8 18h6a3 3 0 0 0 0-6h-4a3 3 0 0 1 0-6h6" />
+  </svg>
+)
 
 /** The Studio tool: hands the screen the Studio's own Sanity connection. */
 export function BulkUploadTool() {
@@ -64,27 +116,41 @@ export function BulkUploadTool() {
   const router = useRouter()
   const uploader: UploaderClient = {
     uploadImage: (file) => client.assets.upload('image', file, {filename: file.name}),
+    uploadFile: (file) => client.assets.upload('file', file, {filename: file.name}),
     findByAsset: (assetId) =>
       client.fetch<string | null>(
         `*[_type == "photo" && image.asset._ref == $id][0]._id`,
         {id: assetId},
       ),
+    findRouteByAsset: (assetId) =>
+      client.fetch<string | null>(
+        `*[_type == "track" && file.asset._ref == $id][0]._id`,
+        {id: assetId},
+      ),
     createPhoto: (doc) => client.create(doc),
+    createRoute: (doc) => client.create(doc),
   }
-  return <BulkUploadView uploader={uploader} openDocument={(id) => router.navigateIntent('edit', {id, type: 'photo'})} />
+  return (
+    <BulkUploadView
+      uploader={uploader}
+      openDocument={(id, type) => router.navigateIntent('edit', {id, type})}
+    />
+  )
 }
 
 /**
- * Drop in a pile of photos, give each a title (or take it off the list), then press one button:
- * each becomes a Photo, placed from its own GPS data and dated from when it was taken.
- * Nothing is sent to Sanity until that button. Drone photos are spotted from their DJI file names by the site.
+ * Drop in a pile of photos and GPX routes, fill in what's asked (a title if you want one for photos;
+ * a title and bike/hike/other for routes), take off any you don't want, then press one button.
+ * Nothing is sent to Sanity until that button. Photos are placed from their own GPS data and dated from
+ * when they were taken; routes are dated from their start time. Drone photos are spotted from their
+ * DJI file names by the site.
  */
 export function BulkUploadView({
   uploader,
   openDocument,
 }: {
   uploader: UploaderClient
-  openDocument: (docId: string) => void
+  openDocument: (docId: string, type: 'photo' | 'track') => void
 }) {
   const [rows, setRows] = useState<Row[]>([])
   const [running, setRunning] = useState(false)
@@ -93,7 +159,7 @@ export function BulkUploadView({
   const filesById = useRef(new Map<number, File>())
   const picker = useRef<HTMLInputElement | null>(null)
   const previewsById = useRef(new Map<number, string>())
-  // The latest rows, for the upload to read titles typed since the last render.
+  // The latest rows, for the upload to read what was typed since the last render.
   const rowsRef = useRef<Row[]>([])
   rowsRef.current = rows
 
@@ -107,6 +173,7 @@ export function BulkUploadView({
       files.clear()
     }
   }, [])
+
   const patchRow = useCallback((id: number, patch: Partial<Row>) => {
     setRows((current) => current.map((row) => (row.id === id ? {...row, ...patch} : row)))
   }, [])
@@ -127,6 +194,27 @@ export function BulkUploadView({
       if (!file || !row) return
       patchRow(id, {status: 'uploading', note: undefined})
       try {
+        if (row.kind === 'route') {
+          if (!row.route || !row.activity || !row.title.trim()) throw new Error('This route is missing details.')
+          const asset = await uploader.uploadFile(file)
+          // The same GPX uploaded twice gives back the same file: don't make a second route for it.
+          const existing = await uploader.findRouteByAsset(asset._id)
+          if (existing) {
+            patchRow(id, {status: 'duplicate', docId: existing, note: 'Already on the map.'})
+            return
+          }
+          const doc = await uploader.createRoute(
+            routeFromUpload(asset._id, {
+              title: row.title,
+              activity: row.activity,
+              coordinates: row.route.coordinates,
+              startedAt: row.route.startedAt,
+            }),
+          )
+          patchRow(id, {status: 'done', docId: doc._id})
+          return
+        }
+
         const meta = row.meta ?? {}
         const asset = await uploader.uploadImage(file)
 
@@ -167,22 +255,28 @@ export function BulkUploadView({
   const addFiles = useCallback(
     (list: FileList | File[]) => {
       const added: Row[] = []
-      const toRead: {id: number; file: File}[] = []
+      const photos: {id: number; file: File}[] = []
+      const routes: {id: number; file: File}[] = []
       for (const file of Array.from(list)) {
         const id = nextId.current++
-        if (!isPhotoFile(file)) {
-          added.push({id, name: file.name, status: 'skipped', note: 'Not a photo.', title: ''})
-          continue
+        if (isGpxFile(file)) {
+          filesById.current.set(id, file)
+          added.push({id, name: file.name, kind: 'route', status: 'reading', title: ''})
+          routes.push({id, file})
+        } else if (isPhotoFile(file)) {
+          filesById.current.set(id, file)
+          const preview = URL.createObjectURL(file)
+          previewsById.current.set(id, preview)
+          added.push({id, name: file.name, kind: 'photo', status: 'reading', preview, title: ''})
+          photos.push({id, file})
+        } else {
+          added.push({id, name: file.name, kind: 'photo', status: 'skipped', note: 'Not a photo or a GPX route.', title: ''})
         }
-        filesById.current.set(id, file)
-        const preview = URL.createObjectURL(file)
-        previewsById.current.set(id, preview)
-        added.push({id, name: file.name, status: 'reading', preview, title: ''})
-        toRead.push({id, file})
       }
       setRows((current) => [...current, ...added])
-      // Reading the file's GPS and date happens here, before anything is uploaded, so a missing location shows up early.
-      for (const {id, file} of toRead) {
+
+      // Reading the file happens here, before anything is uploaded, so anything missing shows up early.
+      for (const {id, file} of photos) {
         void readPhotoMeta(file).then((meta) => {
           patchRow(id, {
             status: 'ready',
@@ -191,8 +285,33 @@ export function BulkUploadView({
           })
         })
       }
+      for (const {id, file} of routes) {
+        void file
+          .text()
+          .then((text) => {
+            const gpx = readGpx(text)
+            const route = {
+              coordinates: gpx.coordinates,
+              startedAt: plausibleTime(gpx.time ? new Date(gpx.time) : null),
+            }
+            patchRow(id, {
+              status: 'ready',
+              route,
+              activity: guessActivity(gpx.type),
+              title: gpx.name ?? titleFromFileName(file.name),
+              note: routeSummary(route),
+            })
+          })
+          .catch((error: unknown) => {
+            forget([id])
+            patchRow(id, {
+              status: 'skipped',
+              note: error instanceof Error ? error.message : 'Couldn’t read that GPX.',
+            })
+          })
+      }
     },
-    [patchRow],
+    [patchRow, forget],
   )
 
   const counts = rows.reduce(
@@ -200,10 +319,20 @@ export function BulkUploadView({
     {} as Partial<Record<Status, number>>,
   )
   const ready = rows.filter((row) => row.status === 'ready')
+  const complete = ready.filter((row) => !missingDetails(row))
+  const incomplete = ready.length - complete.length
   const reading = rows.some((row) => row.status === 'reading')
   const failed = rows.filter((row) => row.status === 'error').map((row) => row.id)
   const sent = rows.filter((row) => ['done', 'no-location', 'duplicate', 'error'].includes(row.status)).length
   const inFlight = rows.filter((row) => row.status === 'waiting' || row.status === 'uploading').length
+  const photoCount = complete.filter((row) => row.kind === 'photo').length
+  const routeCount = complete.filter((row) => row.kind === 'route').length
+  const uploadLabel =
+    complete.length === 0
+      ? 'Upload'
+      : `Upload ${[photoCount ? plural(photoCount, 'photo') : '', routeCount ? plural(routeCount, 'route') : '']
+          .filter(Boolean)
+          .join(' and ')}`
 
   return (
     <Box padding={4} style={{maxWidth: 760, margin: '0 auto'}}>
@@ -213,9 +342,10 @@ export function BulkUploadView({
             Bulk upload
           </Text>
           <Text size={1} muted>
-            Drop in as many photos as you like, give each a title if you want one, remove any you don’t, then press
-            Upload. Each is placed from the GPS in the photo and dated from when it was taken. Drone photos are spotted
-            automatically from their file names.
+            Drop in photos and GPX routes. Give photos a title if you like; routes need a title and bike, hike or other.
+            Remove any you don’t want, then press Upload. Photos are placed from the GPS in the photo and dated from
+            when it was taken; routes are dated from when they started. Drone photos are spotted automatically from
+            their file names.
           </Text>
         </Stack>
 
@@ -239,7 +369,7 @@ export function BulkUploadView({
         >
           <Stack gap={3}>
             <Text size={2} weight="medium">
-              Drop photos here
+              Drop photos and GPX routes here
             </Text>
             <Text size={1} muted>
               or click to choose them
@@ -248,7 +378,7 @@ export function BulkUploadView({
           <input
             ref={picker}
             type="file"
-            accept="image/*"
+            accept="image/*,.gpx,application/gpx+xml"
             multiple
             hidden
             onChange={(event) => {
@@ -264,9 +394,8 @@ export function BulkUploadView({
               <Flex align="center" gap={2}>
                 {running || reading ? <Spinner muted /> : null}
                 <Text size={1} muted>
-                  {running
-                    ? `${sent} of ${sent + inFlight} uploaded`
-                    : `${ready.length} ready to upload`}
+                  {running ? `${sent} of ${sent + inFlight} uploaded` : `${complete.length} ready to upload`}
+                  {!running && incomplete ? ` · ${incomplete} need details` : ''}
                   {counts['no-location'] ? ` · ${counts['no-location']} need a location` : ''}
                   {counts.duplicate ? ` · ${counts.duplicate} already uploaded` : ''}
                   {counts.error ? ` · ${counts.error} failed` : ''}
@@ -288,82 +417,111 @@ export function BulkUploadView({
                   />
                 ) : null}
                 <Button
-                  text={ready.length === 1 ? 'Upload 1 photo' : `Upload ${ready.length} photos`}
+                  text={uploadLabel}
                   tone="positive"
                   fontSize={1}
-                  disabled={running || reading || ready.length === 0}
-                  onClick={() => void uploadIds(ready.map((row) => row.id))}
+                  disabled={running || reading || incomplete > 0 || complete.length === 0}
+                  onClick={() => void uploadIds(complete.map((row) => row.id))}
                 />
               </Flex>
             </Flex>
 
             <Card border radius={2} overflow="hidden">
               <Stack>
-                {rows.map((row, index) => (
-                  <Card key={row.id} padding={3} borderTop={index > 0} tone="default">
-                    <Flex align="center" gap={3}>
-                      {row.preview ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={row.preview}
-                          alt=""
-                          style={{width: 56, height: 56, objectFit: 'cover', borderRadius: 3, flexShrink: 0}}
-                        />
-                      ) : null}
-                      <Stack gap={2} style={{minWidth: 0, flex: 1}}>
-                        <Text size={1} muted textOverflow="ellipsis">
-                          {row.name}
-                        </Text>
-                        {editable(row) ? (
-                          <TextInput
-                            fontSize={1}
-                            padding={2}
-                            placeholder="Title (optional)"
-                            aria-label={`Title for ${row.name}`}
-                            value={row.title}
-                            onChange={(event) => patchRow(row.id, {title: event.currentTarget.value})}
+                {rows.map((row, index) => {
+                  const missing = missingDetails(row)
+                  const badge: Status | 'needs-details' = row.status === 'ready' && missing ? 'needs-details' : row.status
+                  return (
+                    <Card key={row.id} padding={3} borderTop={index > 0} tone="default">
+                      <Flex align="center" gap={3}>
+                        {row.kind === 'route' ? (
+                          <Flex
+                            align="center"
+                            justify="center"
+                            aria-hidden
+                            style={{width: 56, height: 56, borderRadius: 3, flexShrink: 0, background: 'rgba(128,128,128,0.15)'}}
+                          >
+                            <RouteIcon />
+                          </Flex>
+                        ) : row.preview ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={row.preview}
+                            alt=""
+                            style={{width: 56, height: 56, objectFit: 'cover', borderRadius: 3, flexShrink: 0}}
                           />
-                        ) : row.title ? (
-                          <Text size={1} weight="medium" textOverflow="ellipsis">
-                            {row.title}
+                        ) : null}
+                        <Stack gap={2} style={{minWidth: 0, flex: 1}}>
+                          <Text size={1} muted textOverflow="ellipsis">
+                            {row.name}
                           </Text>
-                        ) : null}
-                        {row.note ? (
-                          <Text size={1} muted>
-                            {row.note}
-                          </Text>
-                        ) : null}
-                      </Stack>
-                      <Flex align="center" gap={2} style={{flexShrink: 0}}>
-                        {editable(row) ? (
-                          <Button
-                            text="Remove"
-                            mode="bleed"
-                            tone="critical"
-                            fontSize={1}
-                            padding={2}
-                            onClick={() => {
-                              forget([row.id])
-                              setRows((current) => current.filter((item) => item.id !== row.id))
-                            }}
-                          />
-                        ) : null}
-                        {row.docId && (row.status === 'no-location' || row.status === 'duplicate') ? (
-                          <Button
-                            text="Open"
-                            mode="ghost"
-                            fontSize={1}
-                            padding={2}
-                            onClick={() => openDocument(row.docId!)}
-                          />
-                        ) : null}
-                        <Badge tone={STATUS_TONE[row.status]} fontSize={0}>
-                          {STATUS_LABEL[row.status]}
-                        </Badge>
+                          {editable(row) ? (
+                            <TextInput
+                              fontSize={1}
+                              padding={2}
+                              placeholder={row.kind === 'route' ? 'Title' : 'Title (optional)'}
+                              aria-label={`Title for ${row.name}`}
+                              value={row.title}
+                              onChange={(event) => patchRow(row.id, {title: event.currentTarget.value})}
+                            />
+                          ) : row.title ? (
+                            <Text size={1} weight="medium" textOverflow="ellipsis">
+                              {row.title}
+                            </Text>
+                          ) : null}
+                          {row.kind === 'route' && row.route && editable(row) ? (
+                            <Flex gap={1} role="group" aria-label={`Activity for ${row.name}`}>
+                              {ACTIVITIES.map((activity) => (
+                                <Button
+                                  key={activity.value}
+                                  text={activity.label}
+                                  fontSize={1}
+                                  padding={2}
+                                  mode={row.activity === activity.value ? 'default' : 'ghost'}
+                                  tone={row.activity === activity.value ? 'primary' : 'default'}
+                                  aria-pressed={row.activity === activity.value}
+                                  onClick={() => patchRow(row.id, {activity: activity.value})}
+                                />
+                              ))}
+                            </Flex>
+                          ) : null}
+                          {row.note || missing ? (
+                            <Text size={1} muted>
+                              {[row.note, missing].filter(Boolean).join(' ')}
+                            </Text>
+                          ) : null}
+                        </Stack>
+                        <Flex align="center" gap={2} style={{flexShrink: 0}}>
+                          {editable(row) ? (
+                            <Button
+                              text="Remove"
+                              mode="bleed"
+                              tone="critical"
+                              fontSize={1}
+                              padding={2}
+                              onClick={() => {
+                                forget([row.id])
+                                setRows((current) => current.filter((item) => item.id !== row.id))
+                              }}
+                            />
+                          ) : null}
+                          {row.docId && (row.status === 'no-location' || row.status === 'duplicate') ? (
+                            <Button
+                              text="Open"
+                              mode="ghost"
+                              fontSize={1}
+                              padding={2}
+                              onClick={() => openDocument(row.docId!, row.kind === 'route' ? 'track' : 'photo')}
+                            />
+                          ) : null}
+                          <Badge tone={badge === 'needs-details' ? 'caution' : STATUS_TONE[badge]} fontSize={0}>
+                            {badge === 'needs-details' ? 'Needs details' : STATUS_LABEL[badge]}
+                          </Badge>
+                        </Flex>
                       </Flex>
-                    </Flex>
-                  </Card>
-                ))}
+                    </Card>
+                  )
+                })}
               </Stack>
             </Card>
           </Stack>
