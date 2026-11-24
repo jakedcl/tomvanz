@@ -5,6 +5,8 @@ import {Button, Card, Flex, Stack, Text} from '@sanity/ui'
 import {PatchEvent, set, unset, useClient, useFormValue, type ObjectInputProps} from 'sanity'
 import {patchTitleIfEmpty, routeTitleFallback, titleFromCoordinates} from '@/lib/auto-title'
 import {postReverseGeocodePlace} from '@/lib/reverse-geocode-client'
+import {plausibleTime} from '@/lib/bulk-upload'
+import {linkPhotosToRouteDocument} from '@/lib/link-route-photos'
 import {prepareRouteDisplayFields} from '@/lib/simplify-route'
 import {lineCoordinates} from '../../lib/sanity/types'
 import {readGpx} from '../lib/parseGpx'
@@ -22,12 +24,14 @@ export function GpxInput(props: ObjectInputProps) {
   const route = useFormValue(['route']) as {coordinates?: unknown} | undefined
   const [message, setMessage] = useState<'idle' | 'ok' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [linkedNote, setLinkedNote] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const hasFile = Boolean(fileValue?.asset?._ref)
   const hasRoute = lineCoordinates(route).length >= 2
 
   async function onFile(file: File) {
     setError(null)
+    setLinkedNote(null)
     try {
       const text = await file.text()
       const gpx = readGpx(text)
@@ -55,10 +59,13 @@ export function GpxInput(props: ObjectInputProps) {
             suggestedTitle = fallback
           }
         }
+        const startedAt = plausibleTime(gpx.time ? new Date(gpx.time) : null)
+        const endedAt = plausibleTime(gpx.endTime ? new Date(gpx.endTime) : null)
         await client
           .patch(draftId)
           .set({
             ...patchTitleIfEmpty(currentTitle, suggestedTitle),
+            ...(startedAt ? {startedAt} : {}),
             route: {
               type: 'LineString',
               coordinates: JSON.stringify(gpx.coordinates),
@@ -67,6 +74,18 @@ export function GpxInput(props: ObjectInputProps) {
             distanceMeters,
           })
           .commit()
+        if (startedAt && endedAt) {
+          const {linkedCount} = await linkPhotosToRouteDocument(
+            client,
+            draftId,
+            startedAt,
+            endedAt,
+            gpx.coordinates,
+          )
+          if (linkedCount > 0) {
+            setLinkedNote(`Linked ${linkedCount} photo${linkedCount === 1 ? '' : 's'} to this route.`)
+          }
+        }
       }
       setMessage('ok')
     } catch (caught) {
@@ -118,6 +137,11 @@ export function GpxInput(props: ObjectInputProps) {
           </Text>
         ) : null}
       </Flex>
+      {linkedNote ? (
+        <Text size={1} muted>
+          {linkedNote}
+        </Text>
+      ) : null}
       {message === 'ok' ? (
         <Card padding={3} radius={2} tone="positive">
           <Text size={1}>Got the route. Publish to put it on the map.</Text>

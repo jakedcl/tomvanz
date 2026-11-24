@@ -1,6 +1,6 @@
 'use client'
 
-import {useEffect, useMemo, useRef, useState} from 'react'
+import {useEffect, useMemo, useState} from 'react'
 import {createPortal} from 'react-dom'
 import {CloseIcon} from './CloseIcon'
 import {ElevationChart} from './ElevationChart'
@@ -173,18 +173,6 @@ function Lightbox({
   )
 }
 
-/**
- * Colours the card's pointer (the little arrow down to its photo on the map) to match the
- * bottom of the card: white when there's a details section, dark when the photo runs to the edge.
- */
-function PointerColor({light}: {light: boolean}) {
-  const ref = useRef<HTMLSpanElement | null>(null)
-  useEffect(() => {
-    ref.current?.closest<HTMLElement>('.tv-popup')?.style.setProperty('--tip', light ? '#ffffff' : '#0c0c0c')
-  }, [light])
-  return <span ref={ref} hidden />
-}
-
 export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: Props) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -195,9 +183,13 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: 
   const card = cardModel(data, selected)
 
   useEffect(() => {
-    if (selected.kind !== 'flight') return
+    if (selected.kind !== 'flight' && selected.kind !== 'track') return
+    const path =
+      selected.kind === 'flight'
+        ? `/api/flight/${encodeURIComponent(selected.id)}`
+        : `/api/track/${encodeURIComponent(selected.id)}`
     let cancelled = false
-    fetch(`/api/flight/${encodeURIComponent(selected.id)}`)
+    fetch(path)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((payload: {photos: LinkedPhoto[]}) => {
         if (!cancelled) setLinkedPhotos(payload.photos ?? [])
@@ -207,6 +199,18 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: 
       cancelled = true
     }
   }, [selected.id, selected.kind])
+
+  useEffect(() => {
+    if (expanded) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose, expanded])
 
   if (!card) return null
 
@@ -234,7 +238,7 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: 
   }
 
   const frame =
-    'tv-card w-[min(340px,calc(100vw-24px))] max-h-[var(--card-max,520px)] overflow-y-auto overflow-x-hidden rounded-[22px] bg-white shadow-[0_24px_64px_rgba(0,0,0,0.3)] ring-1 ring-black/5'
+    'tv-card tv-sheet w-full max-h-[min(70vh,560px)] overflow-y-auto overflow-x-hidden rounded-t-[22px] bg-white shadow-[0_-8px_40px_rgba(0,0,0,0.22)] ring-1 ring-black/5 md:rounded-[22px] md:shadow-[0_24px_64px_rgba(0,0,0,0.28)]'
 
   // An untitled photo leads with its date instead of leaving a blank headline.
   const untitled = card.title.trim() === ''
@@ -242,13 +246,15 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: 
   const chips = untitled ? card.stats.slice(1) : card.stats
   const hasRoute = Boolean(routeCoords && routeCoords.length >= 2)
   const isFlight = selected.kind === 'flight' && Boolean(flight)
-  const hasDetails = chips.length > 0 || Boolean(card.body) || hasRoute || isFlight || linkedPhotos.length > 0
+  const linkedForSelection =
+    selected.kind === 'flight' || selected.kind === 'track' ? linkedPhotos : []
+  const hasDetails =
+    chips.length > 0 || Boolean(card.body) || hasRoute || isFlight || linkedForSelection.length > 0
   const hasCaption = Boolean(headline) || Boolean(card.eyebrow)
 
   return (
     <article className={frame}>
-      <PointerColor light={hasDetails} />
-      <div className="relative aspect-[4/3] overflow-hidden bg-neutral-200">
+      <div className="relative aspect-[4/3] overflow-hidden bg-neutral-200 md:rounded-t-[22px]">
         {cover ? (
           <button
             type="button"
@@ -340,9 +346,9 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: 
               {card.body}
             </p>
           ) : null}
-          {linkedPhotos.length > 0 ? (
+          {linkedForSelection.length > 0 ? (
             <div className={`${chips.length || card.body ? 'mt-3' : ''} flex gap-2 overflow-x-auto pb-1`}>
-              {linkedPhotos.map((item) => {
+              {linkedForSelection.map((item) => {
                 const thumb = item.photo?.asset
                   ? urlFor(item.photo).width(160).height(120).fit('crop').url()
                   : null

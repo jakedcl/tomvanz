@@ -23,6 +23,7 @@ import {
 } from '../../lib/bulk-upload'
 import {photoTitleFallback, routeTitleFallback, titleFromCoordinates} from '../../lib/auto-title'
 import {linkPhotosToFlightDocument} from '../../lib/link-flight-photos'
+import {linkPhotosToRouteDocument} from '../../lib/link-route-photos'
 import {postReverseGeocodePlace} from '../../lib/reverse-geocode-client'
 import {photoLinkWindow} from '../../lib/flight-photo-link'
 import {postParseFlight, type ParseFlightApiResponse} from '../../lib/parse-flight-api'
@@ -51,6 +52,12 @@ export type UploaderClient = {
   linkPhotoToFlights: (photoId: string, takenAt: string | undefined, fileName: string) => Promise<void>
   parseFlightLog: (file: File) => Promise<ParseFlightApiResponse>
   reverseGeocodePlace: (lat: number, lng: number) => Promise<string | undefined>
+  linkPhotosToRoute: (
+    routeId: string,
+    startedAt: string,
+    endedAt: string,
+    coordinates: [number, number][],
+  ) => Promise<{linkedCount: number}>
 }
 
 type ParseFlightPayload = ParseFlightApiResponse
@@ -80,7 +87,7 @@ type Row = {
   /** Photos: what was read from the file (GPS, date taken). */
   meta?: PhotoMeta
   /** Routes: the line and start time read from the GPX. */
-  route?: {coordinates: [number, number][]; startedAt?: string}
+  route?: {coordinates: [number, number][]; startedAt?: string; endedAt?: string}
   /** Routes: bike, hike or other. Left empty when the file doesn't say, so it's chosen on purpose. */
   activity?: Activity
   title: string
@@ -210,6 +217,8 @@ export function BulkUploadTool() {
       if (!token) return undefined
       return postReverseGeocodePlace(lat, lng, token)
     },
+    linkPhotosToRoute: (routeId, startedAt, endedAt, coordinates) =>
+      linkPhotosToRouteDocument(client, routeId, startedAt, endedAt, coordinates),
     linkPhotoToFlights: async (photoId, takenAt, fileName) => {
       const when = effectiveTakenAt(takenAt, fileName)
       if (!when) return
@@ -352,6 +361,14 @@ export function BulkUploadView({
               startedAt: row.route.startedAt,
             }),
           )
+          if (row.route.startedAt && row.route.endedAt) {
+            await uploader.linkPhotosToRoute(
+              doc._id,
+              row.route.startedAt,
+              row.route.endedAt,
+              row.route.coordinates,
+            )
+          }
           patchRow(id, {status: 'done', docId: doc._id})
           return
         }
@@ -483,6 +500,7 @@ export function BulkUploadView({
             const route = {
               coordinates: gpx.coordinates,
               startedAt: plausibleTime(gpx.time ? new Date(gpx.time) : null),
+              endedAt: plausibleTime(gpx.endTime ? new Date(gpx.endTime) : null),
             }
             const fallback = routeTitleFallback(gpx.name, file.name)
             let title = fallback

@@ -71,6 +71,13 @@ export const photo = defineType({
       to: [{type: 'flight'}],
       description: 'Linked automatically when the photo was taken during a flight.',
     }),
+    defineField({
+      name: 'route',
+      title: 'Route',
+      type: 'reference',
+      to: [{type: 'track'}],
+      description: 'Linked automatically when the photo was taken along a GPX route.',
+    }),
     // Set by the conversion: the id of the old pin this came from (so old shared links still work).
     defineField({name: 'legacyId', title: 'Old id', type: 'string', hidden: true, readOnly: true}),
   ],

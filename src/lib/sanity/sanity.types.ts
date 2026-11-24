@@ -22,6 +22,44 @@ export type SanityImageAssetReference = {
   [internalGroqTypeReferenceTo]?: "sanity.imageAsset";
 };
 
+export type FlightReference = {
+  _ref: string;
+  _type: "reference";
+  _weak?: boolean;
+  [internalGroqTypeReferenceTo]?: "flight";
+};
+
+export type TrackReference = {
+  _ref: string;
+  _type: "reference";
+  _weak?: boolean;
+  [internalGroqTypeReferenceTo]?: "track";
+};
+
+export type Photo = {
+  _id: string;
+  _type: "photo";
+  _createdAt: string;
+  _updatedAt: string;
+  _rev: string;
+  title?: string;
+  image?: {
+    asset?: SanityImageAssetReference;
+    media?: unknown;
+    hotspot?: SanityImageHotspot;
+    crop?: SanityImageCrop;
+    alt?: string;
+    _type: "image";
+  };
+  drone?: boolean;
+  location?: Geopoint;
+  note?: string;
+  takenAt?: string;
+  flight?: FlightReference;
+  route?: TrackReference;
+  legacyId?: string;
+};
+
 export type SanityFileAssetReference = {
   _ref: string;
   _type: "reference";
@@ -73,36 +111,6 @@ export type SanityImageHotspot = {
   y?: number;
   height?: number;
   width?: number;
-};
-
-export type FlightReference = {
-  _ref: string;
-  _type: "reference";
-  _weak?: boolean;
-  [internalGroqTypeReferenceTo]?: "flight";
-};
-
-export type Photo = {
-  _id: string;
-  _type: "photo";
-  _createdAt: string;
-  _updatedAt: string;
-  _rev: string;
-  title?: string;
-  image?: {
-    asset?: SanityImageAssetReference;
-    media?: unknown;
-    hotspot?: SanityImageHotspot;
-    crop?: SanityImageCrop;
-    alt?: string;
-    _type: "image";
-  };
-  drone?: boolean;
-  location?: Geopoint;
-  note?: string;
-  takenAt?: string;
-  flight?: FlightReference;
-  legacyId?: string;
 };
 
 export type Geopoint = {
@@ -239,12 +247,13 @@ export type Slug = {
 
 export type AllSanitySchemaTypes =
   | SanityImageAssetReference
+  | FlightReference
+  | TrackReference
+  | Photo
   | SanityFileAssetReference
   | Track
   | SanityImageCrop
   | SanityImageHotspot
-  | FlightReference
-  | Photo
   | Geopoint
   | Flight
   | SanityImagePaletteSwatch
