@@ -57,11 +57,54 @@ function flightModeLabel(mode: Frame['osd']['flycState']): string {
   return String(mode)
 }
 
+const DJI_PRODUCT_NAMES: Record<string, string> = {
+  MavicMini: 'DJI Mini',
+  Mini2: 'DJI Mini 2',
+  Mini2SE: 'DJI Mini 2 SE',
+  Mini3Pro: 'DJI Mini 3 Pro',
+  Mini4Pro: 'DJI Mini 4 Pro',
+  MiniSE: 'DJI Mini SE',
+  MavicAir: 'DJI Mavic Air',
+  MavicAir2: 'DJI Air 2',
+  MavicAir2S: 'DJI Air 2S',
+  Mavic2: 'DJI Mavic 2',
+  Mavic2Enterprise: 'DJI Mavic 2 Enterprise',
+  Mavic3: 'DJI Mavic 3',
+  Mavic3Pro: 'DJI Mavic 3 Pro',
+  Mavic3Enterprise: 'DJI Mavic 3 Enterprise',
+  MavicPro: 'DJI Mavic Pro',
+  Phantom3Standard: 'DJI Phantom 3 Standard',
+  Phantom3Advanced: 'DJI Phantom 3 Advanced',
+  Phantom3Pro: 'DJI Phantom 3 Pro',
+  Phantom4: 'DJI Phantom 4',
+  Phantom4Pro: 'DJI Phantom 4 Pro',
+  Phantom4ProV2: 'DJI Phantom 4 Pro V2',
+  Phantom4Advanced: 'DJI Phantom 4 Advanced',
+  Phantom4RTK: 'DJI Phantom 4 RTK',
+  Spark: 'DJI Spark',
+  Avata: 'DJI Avata',
+  Avata2: 'DJI Avata 2',
+  FPV: 'DJI FPV',
+  Matrice300RTK: 'DJI Matrice 300 RTK',
+  Matrice30: 'DJI Matrice 30',
+  Matrice350RTK: 'DJI Matrice 350 RTK',
+  Inspire1: 'DJI Inspire 1',
+  Inspire2: 'DJI Inspire 2',
+}
+
+function looksLikeUserNickname(name: string): boolean {
+  return /^[A-Za-z0-9]+-[A-Za-z]/.test(name)
+}
+
 function productLabel(details: {aircraftName?: string; productType?: unknown}): string {
-  const name = details.aircraftName?.trim()
-  if (name) return name
   const pt = details.productType
-  if (typeof pt === 'string') return pt.replace(/([a-z])([A-Z])/g, '$1 $2')
+  if (typeof pt === 'string') {
+    const mapped = DJI_PRODUCT_NAMES[pt]
+    if (mapped) return mapped
+    return `DJI ${pt.replace(/([a-z])([A-Z])/g, '$1 $2')}`
+  }
+  const name = details.aircraftName?.trim()
+  if (name && !looksLikeUserNickname(name)) return name
   return 'DJI drone'
 }
 
@@ -247,12 +290,16 @@ export async function parseFlightLogBytes(
   }
 
   const aircraft = productLabel(details)
-  const home =
+  let home: {lat: number; lng: number} | undefined =
     details.latitude != null &&
     details.longitude != null &&
     VALID_GPS(details.latitude, details.longitude)
       ? {lat: details.latitude, lng: details.longitude}
       : undefined
+  if (!home && track.length > 0) {
+    const [lng, lat] = track[0]!
+    home = {lat, lng}
+  }
 
   const defaultTitle = formatDefaultTitle(startedAtResolved, options.place)
 
@@ -272,13 +319,20 @@ export async function parseFlightLogBytes(
   }
 }
 
+const TITLE_TIME_ZONE = 'America/New_York'
+
 export function formatDefaultTitle(startedAt?: string, place?: string): string {
   const parts: string[] = []
   if (startedAt) {
     const d = new Date(startedAt)
     if (!Number.isNaN(d.getTime())) {
       parts.push(
-        d.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'}),
+        d.toLocaleDateString('en-US', {
+          timeZone: TITLE_TIME_ZONE,
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+        }),
       )
     }
   }

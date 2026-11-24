@@ -20,7 +20,8 @@ import {
   type Activity,
   type PhotoMeta,
 } from '../../lib/bulk-upload'
-import {photoLinkWindow} from '../../lib/flight-photo-link'
+import {photoLinkWindow, planPhotoLinks, type PhotoLinkCandidate} from '../../lib/flight-photo-link'
+import {effectiveTakenAt} from '../../lib/photo-taken-at'
 import {lineLengthMeters} from '../../lib/simplify-route'
 import {readGpx} from '../lib/parseGpx'
 
@@ -36,9 +37,14 @@ export type UploaderClient = {
   createPhoto: (doc: ReturnType<typeof photoFromUpload>) => Promise<{_id: string}>
   createRoute: (doc: ReturnType<typeof routeFromUpload>) => Promise<{_id: string}>
   createFlight: (doc: ReturnType<typeof flightFromUpload>) => Promise<{_id: string}>
-  linkPhotosToFlight: (flightId: string, startedAt: string, durationSeconds: number) => Promise<void>
-  linkPhotoToFlights: (photoId: string, takenAt: string) => Promise<void>
-  parseFlightLog: (assetId: string, sourceFilename: string) => Promise<ParseFlightPayload>
+  findFlightBySourceFilename: (name: string) => Promise<string | null>
+  linkPhotosToFlight: (
+    flightId: string,
+    startedAt: string,
+    durationSeconds: number,
+  ) => Promise<{unlinkedLabels: string[]}>
+  linkPhotoToFlights: (photoId: string, takenAt: string | undefined, fileName: string) => Promise<void>
+  parseFlightLog: (file: File) => Promise<ParseFlightPayload>
 }
 
 type ParseFlightPayload = {
@@ -89,6 +95,7 @@ type Row = {
 }
 
 const CONCURRENCY = 3
+const PARSE_CONCURRENCY = 2
 const METERS_PER_MILE = 1609.344
 
 const STATUS_LABEL: Record<Status, string> = {
@@ -191,40 +198,48 @@ export function BulkUploadTool() {
       ),
     findFlightByAsset: (assetId) =>
       client.fetch<string | null>(`*[_type == "flight" && log.asset._ref == $id][0]._id`, {id: assetId}),
+    findFlightBySourceFilename: (name) =>
+      client.fetch<string | null>(`*[_type == "flight" && sourceFilename == $name][0]._id`, {name}),
     createPhoto: (doc) => client.create(doc),
     createRoute: (doc) => client.create(doc),
     createFlight: (doc) => client.create(doc),
     linkPhotosToFlight: async (flightId, startedAt, durationSeconds) => {
-      const {start, end} = photoLinkWindow(startedAt, durationSeconds)
-      const ids = await client.fetch<string[]>(
-        `*[_type == "photo" && defined(takenAt) && takenAt >= $start && takenAt <= $end && !defined(flight)]._id`,
-        {start, end},
+      const candidates = await client.fetch<PhotoLinkCandidate[]>(
+        `*[_type == "photo" && !defined(flight)]{
+          _id,
+          takenAt,
+          "fileName": image.asset->originalFilename
+        }`,
       )
+      const {linkIds, unlinkedLabels} = planPhotoLinks(candidates, startedAt, durationSeconds)
       await Promise.all(
-        ids.map((id) =>
-          client.patch(id).set({flight: {_type: 'reference', _ref: flightId}}).commit(),
-        ),
+        linkIds.map((id) => client.patch(id).set({flight: {_type: 'reference', _ref: flightId}}).commit()),
       )
+      return {unlinkedLabels}
     },
-    parseFlightLog: async (assetId, sourceFilename) => {
+    parseFlightLog: async (file) => {
       const token = client.config().token
       if (!token) throw new Error('Sign in to Studio to parse flight logs.')
+      const body = new FormData()
+      body.append('file', file)
       const res = await fetch('/api/parse-flight', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({assetId, sourceFilename}),
+        headers: {Authorization: `Bearer ${token}`},
+        body,
       })
       const data = (await res.json()) as ParseFlightPayload & {error?: string}
       if (!res.ok) throw new Error(data.error ?? 'Could not parse that flight log.')
       return data
     },
-    linkPhotoToFlights: async (photoId, takenAt) => {
+    linkPhotoToFlights: async (photoId, takenAt, fileName) => {
+      const when = effectiveTakenAt(takenAt, fileName)
+      if (!when) return
       const flights = await client.fetch<{_id: string; startedAt: string; durationSeconds: number}[]>(
         `*[_type == "flight" && defined(startedAt) && defined(durationSeconds)]{
           _id, startedAt, durationSeconds
         }`,
       )
-      const taken = new Date(takenAt).getTime()
+      const taken = new Date(when).getTime()
       for (const f of flights) {
         const {start, end} = photoLinkWindow(f.startedAt, f.durationSeconds)
         const startMs = new Date(start).getTime()
@@ -301,33 +316,42 @@ export function BulkUploadView({
       patchRow(id, {status: 'uploading', note: undefined})
       try {
         if (row.kind === 'flight') {
-          if (!row.flightParse || !row.fileAssetId || !row.title.trim()) {
+          if (!row.flightParse || !row.title.trim()) {
             throw new Error('This flight is missing details.')
           }
-          const existing = await uploader.findFlightByAsset(row.fileAssetId)
+          const asset = await uploader.uploadFile(file)
+          const existing = await uploader.findFlightByAsset(asset._id)
           if (existing) {
             patchRow(id, {status: 'duplicate', docId: existing, note: 'Already on the map.'})
             return
           }
           const doc = await uploader.createFlight(
-            flightFromUpload(row.fileAssetId, {
+            flightFromUpload(asset._id, {
               ...row.flightParse,
               hasGps: !row.flightParse.noMap,
               title: row.title,
               sourceFilename: row.name,
             }),
           )
+          let linkNote = ''
           if (row.flightParse.startedAt && row.flightParse.durationSeconds) {
-            await uploader.linkPhotosToFlight(doc._id, row.flightParse.startedAt, row.flightParse.durationSeconds)
+            const {unlinkedLabels} = await uploader.linkPhotosToFlight(
+              doc._id,
+              row.flightParse.startedAt,
+              row.flightParse.durationSeconds,
+            )
+            if (unlinkedLabels.length > 0) {
+              linkNote = ` Could not auto-link: ${unlinkedLabels.slice(0, 5).join(', ')}${unlinkedLabels.length > 5 ? '…' : ''}.`
+            }
           }
           if (row.flightParse.noMap) {
             patchRow(id, {
               status: 'no-gps',
               docId: doc._id,
-              note: 'Saved, but it has no GPS and will not show on the map.',
+              note: `Saved, but it has no GPS and will not show on the map.${linkNote}`,
             })
           } else {
-            patchRow(id, {status: 'done', docId: doc._id})
+            patchRow(id, {status: 'done', docId: doc._id, note: linkNote || undefined})
           }
           return
         }
@@ -364,9 +388,7 @@ export function BulkUploadView({
         }
 
         const doc = await uploader.createPhoto(photoFromUpload(asset._id, meta, row.title))
-        if (meta.takenAt) {
-          await uploader.linkPhotoToFlights(doc._id, meta.takenAt)
-        }
+        await uploader.linkPhotoToFlights(doc._id, meta.takenAt, file.name)
         if (meta.lat == null) {
           patchRow(id, {
             status: 'no-location',
@@ -438,37 +460,34 @@ export function BulkUploadView({
           })
         })
       }
-      for (const {id, file} of flights) {
-        void (async () => {
-          try {
-            const asset = await uploader.uploadFile(file)
-            const duplicate = await uploader.findFlightByAsset(asset._id)
-            if (duplicate) {
-              patchRow(id, {status: 'duplicate', docId: duplicate, note: 'Already on the map.', fileAssetId: asset._id})
-              return
-            }
-            const parsed = await uploader.parseFlightLog(asset._id, file.name)
-            patchRow(id, {
-              status: 'ready',
-              fileAssetId: asset._id,
-              flightParse: parsed,
-              title: parsed.defaultTitle,
-              note: [
-                flightSummary(parsed),
-                parsed.noMap ? 'No GPS in this log — it will not appear on the map.' : undefined,
-              ]
-                .filter(Boolean)
-                .join(' '),
-            })
-          } catch (error: unknown) {
+      void runPool(flights, PARSE_CONCURRENCY, async ({id, file}) => {
+        try {
+          const duplicate = await uploader.findFlightBySourceFilename(file.name)
+          if (duplicate) {
+            patchRow(id, {status: 'duplicate', docId: duplicate, note: 'A flight with this file name is already on the map.'})
             forget([id])
-            patchRow(id, {
-              status: 'error',
-              note: error instanceof Error ? error.message : 'Could not read that flight log.',
-            })
+            return
           }
-        })()
-      }
+          const parsed = await uploader.parseFlightLog(file)
+          patchRow(id, {
+            status: 'ready',
+            flightParse: parsed,
+            title: parsed.defaultTitle,
+            note: [
+              flightSummary(parsed),
+              parsed.noMap ? 'No GPS in this log — it will not appear on the map.' : undefined,
+            ]
+              .filter(Boolean)
+              .join(' '),
+          })
+        } catch (error: unknown) {
+          forget([id])
+          patchRow(id, {
+            status: 'error',
+            note: error instanceof Error ? error.message : 'Could not read that flight log.',
+          })
+        }
+      })
       for (const {id, file} of routes) {
         void file
           .text()
@@ -495,7 +514,7 @@ export function BulkUploadView({
           })
       }
     },
-    [patchRow, forget],
+    [patchRow, forget, uploader],
   )
 
   const counts = rows.reduce(
@@ -507,7 +526,7 @@ export function BulkUploadView({
   const incomplete = ready.length - complete.length
   const reading = rows.some((row) => row.status === 'reading')
   const failed = rows.filter((row) => row.status === 'error').map((row) => row.id)
-  const sent = rows.filter((row) => ['done', 'no-location', 'duplicate', 'error'].includes(row.status)).length
+  const sent = rows.filter((row) => ['done', 'no-location', 'no-gps', 'duplicate', 'error'].includes(row.status)).length
   const inFlight = rows.filter((row) => row.status === 'waiting' || row.status === 'uploading').length
   const photoCount = complete.filter((row) => row.kind === 'photo').length
   const routeCount = complete.filter((row) => row.kind === 'route').length
