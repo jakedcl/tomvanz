@@ -11,7 +11,8 @@ export type FlightPhotoLinkClient = {
 const CANDIDATES_QUERY = `*[_type == "photo" && !defined(flight)]{
   _id,
   takenAt,
-  "fileName": image.asset->originalFilename
+  "fileName": image.asset->originalFilename,
+  "exifDateTimeOriginal": image.asset->metadata.exif.DateTimeOriginal
 }`
 
 export async function linkPhotosToFlightDocument(

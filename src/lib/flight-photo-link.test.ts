@@ -18,11 +18,20 @@ describe('planPhotoLinks', () => {
 
   it('links using a DJI file name when takenAt is missing', () => {
     const plan = planPhotoLinks(
-      [{_id: 'b', fileName: 'dji_fly_20260514_180500_x.jpg'}],
+      [{_id: 'b', fileName: 'dji_fly_20260514_140500_x.jpg'}],
       startedAt,
       duration,
     )
     expect(plan.linkIds).toEqual(['b'])
+  })
+
+  it('links using EXIF DateTimeOriginal when takenAt and file name lack a time', () => {
+    const plan = planPhotoLinks(
+      [{_id: 'd', fileName: 'photo.jpg', exifDateTimeOriginal: '2026:05:14 18:05:00'}],
+      startedAt,
+      duration,
+    )
+    expect(plan.linkIds).toEqual(['d'])
   })
 
   it('lists drone photos with no usable time', () => {
