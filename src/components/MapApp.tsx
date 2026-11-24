@@ -157,7 +157,7 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
           onThreeDGesture={startThreeDFromGesture}
           selected={card}
           highlightId={
-            pileMembers?.[pileIndex]?.kind === 'pin' ? pileMembers[pileIndex]!.id : pilePins?.[pileIndex]?._id ?? null
+            pileMembers?.[pileIndex]?.kind === 'pin' ? pileMembers[pileIndex]!.id : null
           }
           onSelect={select}
           onPile={openPile}
