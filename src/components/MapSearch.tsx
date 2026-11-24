@@ -5,6 +5,7 @@ import {CloseIcon} from './CloseIcon'
 import {PhotoShape} from './shapes'
 import {sanityImageAlt, urlFor} from '@/lib/sanity/image'
 import {formatMiles} from '@/lib/geo'
+import {FLIGHT_PATH_COLOR} from '@/lib/flight-color'
 import {trackColor} from '@/lib/track-color'
 import {
   activeFilterCount,
@@ -71,7 +72,7 @@ export function MapSearch({state, onChange, typeOptions, hasDrone, results, tota
               type="search"
               value={state.query}
               onChange={(event) => onChange({...state, query: event.target.value})}
-              placeholder="Search photos and routes"
+              placeholder="Search photos, routes, and flights"
               aria-label="Search"
               className="h-11 min-w-0 flex-1 rounded-full bg-black/[0.06] px-4 text-[15px] outline-none placeholder:text-black/40 focus:bg-black/[0.09]"
             />
@@ -162,6 +163,26 @@ function ResultThumb({item}: {item: ResultItem}) {
         alt={sanityImageAlt(item.photo, item.title)}
         className="h-11 w-11 shrink-0 rounded-lg object-cover"
       />
+    )
+  }
+  if (item.kind === 'flight') {
+    return (
+      <div
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
+        style={{background: `linear-gradient(160deg, ${FLIGHT_PATH_COLOR} 0%, #1a1a1a 85%)`}}
+        aria-hidden
+      >
+        <svg viewBox="0 0 44 44" className="h-full w-full">
+          <path
+            d="M8 28 C16 12, 22 34, 28 20 S36 10, 38 16"
+            fill="none"
+            stroke="white"
+            strokeOpacity="0.9"
+            strokeWidth="2.6"
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
     )
   }
   if (item.kind === 'track') {

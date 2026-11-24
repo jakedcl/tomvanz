@@ -3,6 +3,8 @@ import {describe, expect, it} from 'vitest'
 
 import {
   guessActivity,
+  flightFromUpload,
+  isFlightLogFile,
   isGpxFile,
   isPhotoFile,
   photoFromUpload,
@@ -81,6 +83,36 @@ describe('runPool', () => {
     })
     expect(done.sort()).toEqual([1, 2, 3, 4, 5, 6, 7])
     expect(peak).toBeLessThanOrEqual(3)
+  })
+})
+
+describe('DJI flight logs', () => {
+  it('accepts DJI flight log file names and rejects other text files', () => {
+    expect(isFlightLogFile({name: 'FlightRecord_2026-05-14_[10-00-58].txt'})).toBe(true)
+    expect(isFlightLogFile({name: 'DJIFlightRecord_2024.txt'})).toBe(true)
+    expect(isFlightLogFile({name: 'notes.txt'})).toBe(false)
+    expect(isFlightLogFile({name: 'readme.TXT'})).toBe(false)
+  })
+
+  it('builds a Flight document from parsed log fields', () => {
+    const doc = flightFromUpload('file-abc-txt', {
+      title: 'May 14 · Emerson Hill',
+      defaultTitle: 'May 14 · Emerson Hill',
+      durationSeconds: 600,
+      distanceMeters: 1200,
+      maxHeightMeters: 90,
+      aircraft: 'DJI Mini 3',
+      displayCoordinates: '[[-74,40]]',
+      series: '[]',
+      videoSegments: [],
+      hasGps: true,
+      startedAt: '2026-05-14T14:00:00.000Z',
+      place: 'Emerson Hill',
+    })
+    expect(doc._type).toBe('flight')
+    expect(doc.title).toBe('May 14 · Emerson Hill')
+    expect(doc.log.asset._ref).toBe('file-abc-txt')
+    expect(doc.distanceMeters).toBe(1200)
   })
 })
 

@@ -75,12 +75,29 @@ export type PinDoc = {
   }
 }
 
+export type FlightDoc = {
+  _id: string
+  title: string
+  startedAt?: string
+  place?: string
+  durationSeconds?: number
+  distanceMeters?: number
+  maxHeightMeters?: number
+  aircraft?: string
+  path: {
+    type: 'LineString'
+    coordinates: string | Array<Geopoint | [number, number]>
+  }
+}
+
 export type MapData = {
   name: string
   tracks: TrackDoc[]
+  flights: FlightDoc[]
   pins: PinDoc[]
 }
 
 export type SelectedItem =
   | {kind: 'track'; id: string; lng?: number; lat?: number; fly?: boolean}
+  | {kind: 'flight'; id: string; lng?: number; lat?: number; fly?: boolean}
   | {kind: 'pin'; id: string}

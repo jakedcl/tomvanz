@@ -1,6 +1,6 @@
 'use client'
 
-import {useEffect, useRef} from 'react'
+import {useCallback, useEffect, useRef} from 'react'
 import {createRoot, type Root} from 'react-dom/client'
 import {LngLatBounds, Map as MapLibreMap, Marker, NavigationControl, Popup} from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -8,7 +8,9 @@ import '@/lib/maplibre-worker'
 import {InfoCard} from './InfoCard'
 import {urlFor} from '@/lib/sanity/image'
 import {PILE_FIT_MAX_ZOOM, pileTolerancePx} from '@/lib/pile'
+import {FLIGHT_PATH_COLOR} from '@/lib/flight-color'
 import {trackColor} from '@/lib/track-color'
+import type {FlightSeriesSample} from '@/lib/flight-log'
 import {lineCoordinates, type MapData, type PinDoc, SelectedItem} from '@/lib/sanity/types'
 import type {StyleSpecification} from 'maplibre-gl'
 
@@ -63,6 +65,11 @@ function selectionPoint(data: MapData, selected: SelectedItem): [number, number]
   }
   if (selected.lng != null && selected.lat != null) {
     return [selected.lng, selected.lat]
+  }
+  if (selected.kind === 'flight') {
+    const flight = data.flights.find((item) => item._id === selected.id)
+    if (!flight) return null
+    return lineCoordinates(flight.path)[0] ?? null
   }
   const track = data.tracks.find((item) => item._id === selected.id)
   if (!track) return null
@@ -152,12 +159,15 @@ function focusSelection(
   selected: SelectedItem,
   duration: number,
 ) {
-  if (selected.kind === 'track') {
+  if (selected.kind === 'track' || selected.kind === 'flight') {
     if (!selected.fly) return
-    const track = data.tracks.find((item) => item._id === selected.id)
-    if (!track) return
+    const line =
+      selected.kind === 'track'
+        ? data.tracks.find((item) => item._id === selected.id)?.route
+        : data.flights.find((item) => item._id === selected.id)?.path
+    if (!line) return
     const bounds = new LngLatBounds()
-    for (const [lng, lat] of lineCoordinates(track.route)) bounds.extend([lng, lat])
+    for (const [lng, lat] of lineCoordinates(line)) bounds.extend([lng, lat])
     if (bounds.isEmpty()) return
     map.fitBounds(bounds, {
       // The card opens above the route's start, so leave it room (it's taller for routes with an elevation chart).
@@ -185,7 +195,19 @@ function pinDrop(map: MapLibreMap) {
 function hitLayerIds(map: MapLibreMap): string[] {
   return (map.getStyle()?.layers ?? [])
     .map((layer) => layer.id)
-    .filter((id) => id.startsWith('track-hit-'))
+    .filter((id) => id.startsWith('track-hit-') || id.startsWith('flight-hit-'))
+}
+
+function flightScrubMarkerEl(heading: number): HTMLDivElement {
+  const el = document.createElement('div')
+  el.style.width = '0'
+  el.style.height = '0'
+  el.style.pointerEvents = 'none'
+  el.innerHTML = `<div style="position:relative;width:44px;height:44px;margin:-22px 0 0 -22px;transform:rotate(${heading}deg)">
+    <div style="position:absolute;left:50%;top:4px;width:0;height:0;margin-left:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-bottom:22px solid rgba(217,119,6,0.85);filter:drop-shadow(0 1px 2px rgba(0,0,0,0.35))"></div>
+    <div style="position:absolute;left:50%;top:20px;width:10px;height:10px;margin-left:-5px;border-radius:50%;background:#fff;border:2px solid #d97706"></div>
+  </div>`
+  return el
 }
 
 export function MapCanvas({
@@ -201,6 +223,7 @@ export function MapCanvas({
   const rootRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const markersRef = useRef<Map<string, Marker>>(new Map())
+  const flightScrubRef = useRef<Marker | null>(null)
   const onSelectRef = useRef(onSelect)
   const onPileRef = useRef(onPile)
   const onThreeDGestureRef = useRef(onThreeDGesture)
@@ -232,6 +255,28 @@ export function MapCanvas({
     getSelectedId: () => (selectedRef.current?.kind === 'pin' ? selectedRef.current.id : null),
   })
 
+  const onFlightScrub = useCallback((sample: FlightSeriesSample | null) => {
+    const map = mapRef.current
+    if (!map || !readyRef.current) return
+    if (!sample) {
+      flightScrubRef.current?.remove()
+      flightScrubRef.current = null
+      return
+    }
+    if (!flightScrubRef.current) {
+      const el = flightScrubMarkerEl(sample.heading)
+      flightScrubRef.current = new Marker({element: el, anchor: 'center'}).setLngLat([sample.lng, sample.lat]).addTo(map)
+      return
+    }
+    flightScrubRef.current.setLngLat([sample.lng, sample.lat])
+    flightScrubRef.current.getElement().innerHTML = flightScrubMarkerEl(sample.heading).innerHTML
+  }, [])
+
+  useEffect(() => {
+    flightScrubRef.current?.remove()
+    flightScrubRef.current = null
+  }, [selected?.id, selected?.kind])
+
   useEffect(() => {
     const node = rootRef.current
     if (!node) return
@@ -262,9 +307,10 @@ export function MapCanvas({
       if (layers.length) {
         const hit = map.queryRenderedFeatures(event.point, {layers})[0]
         const id = hit?.properties?.id
+        const layerId = hit?.layer?.id ?? ''
         if (typeof id === 'string' && id) {
           onSelectRef.current({
-            kind: 'track',
+            kind: layerId.startsWith('flight-hit-') ? 'flight' : 'track',
             id,
             lng: event.lngLat.lng,
             lat: event.lngLat.lat,
@@ -348,10 +394,16 @@ export function MapCanvas({
     if (!map || !readyRef.current) return
     const style = map.getStyle()
     for (const layer of style?.layers ?? []) {
-      if (!layer.id.startsWith('track-line-')) continue
-      const id = layer.id.slice('track-line-'.length)
-      const on = selected?.kind === 'track' && selected.id === id
-      map.setPaintProperty(layer.id, 'line-width', on ? 4.5 : 2.5)
+      if (layer.id.startsWith('track-line-')) {
+        const id = layer.id.slice('track-line-'.length)
+        const on = selected?.kind === 'track' && selected.id === id
+        map.setPaintProperty(layer.id, 'line-width', on ? 4.5 : 2.5)
+      }
+      if (layer.id.startsWith('flight-line-')) {
+        const id = layer.id.slice('flight-line-'.length)
+        const on = selected?.kind === 'flight' && selected.id === id
+        map.setPaintProperty(layer.id, 'line-width', on ? 4.5 : 2.5)
+      }
     }
   }, [selected, data])
 
@@ -376,6 +428,8 @@ export function MapCanvas({
         data={data}
         selected={selected}
         onClose={() => onSelectRef.current(null)}
+        onFlightScrub={onFlightScrub}
+        onOpenPhoto={(id) => onSelectRef.current({kind: 'pin', id})}
       />,
     )
 
@@ -450,7 +504,7 @@ export function MapCanvas({
       popup.remove()
       queueMicrotask(() => root.unmount())
     }
-  }, [selected, data])
+  }, [selected, data, onFlightScrub])
 
   return <div ref={rootRef} className="isolate h-full w-full" />
 }
@@ -462,14 +516,17 @@ function clearTrackLayers(map: MapLibreMap) {
     if (
       layer.id.startsWith('track-line-') ||
       layer.id.startsWith('track-casing-') ||
-      layer.id.startsWith('track-hit-')
+      layer.id.startsWith('track-hit-') ||
+      layer.id.startsWith('flight-line-') ||
+      layer.id.startsWith('flight-casing-') ||
+      layer.id.startsWith('flight-hit-')
     ) {
       if (map.getLayer(layer.id)) map.removeLayer(layer.id)
     }
   }
   const sources = style.sources ? Object.keys(style.sources) : []
   for (const id of sources) {
-    if (id.startsWith('track-src-')) {
+    if (id.startsWith('track-src-') || id.startsWith('flight-src-')) {
       if (map.getSource(id)) map.removeSource(id)
     }
   }
@@ -551,6 +608,60 @@ function syncMap(
         'line-color': color,
         'line-width': 2.5,
         'line-dasharray': track.activity === 'hike' ? [2, 1.4] : [1, 0],
+      },
+    })
+    for (const [lng, lat] of coords) {
+      bounds.extend([lng, lat])
+      hasPoint = true
+    }
+  }
+
+  for (const flight of data.flights) {
+    const coords = lineCoordinates(flight.path)
+    if (coords.length < 2) continue
+    const color = FLIGHT_PATH_COLOR
+    const sourceId = `flight-src-${flight._id}`
+    const layerId = `flight-line-${flight._id}`
+    const hitId = `flight-hit-${flight._id}`
+    map.addSource(sourceId, {
+      type: 'geojson',
+      data: {
+        type: 'Feature',
+        properties: {id: flight._id},
+        geometry: {type: 'LineString', coordinates: coords},
+      },
+    })
+    const casingId = `flight-casing-${flight._id}`
+    map.addLayer({
+      id: casingId,
+      type: 'line',
+      source: sourceId,
+      layout: {'line-join': 'round', 'line-cap': 'round'},
+      paint: {
+        'line-color': '#ffffff',
+        'line-width': 6,
+        'line-opacity': 0.88,
+      },
+    })
+    map.addLayer({
+      id: hitId,
+      type: 'line',
+      source: sourceId,
+      layout: {'line-join': 'round', 'line-cap': 'round'},
+      paint: {
+        'line-color': color,
+        'line-width': 18,
+        'line-opacity': 0,
+      },
+    })
+    map.addLayer({
+      id: layerId,
+      type: 'line',
+      source: sourceId,
+      layout: {'line-join': 'round', 'line-cap': 'round'},
+      paint: {
+        'line-color': color,
+        'line-width': 2.5,
       },
     })
     for (const [lng, lat] of coords) {

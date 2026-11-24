@@ -12,6 +12,7 @@ const nextConfig: NextConfig = {
     ],
   },
   transpilePackages: ['sanity', 'next-sanity', 'mediabunny', '@mediabunny/aac-encoder'],
+  serverExternalPackages: ['dji-log-parser-js'],
   async redirects() {
     return [
       { source: '/admin', destination: '/studio', permanent: false },

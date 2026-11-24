@@ -4,11 +4,15 @@ import {useEffect, useMemo, useRef, useState} from 'react'
 import {createPortal} from 'react-dom'
 import {CloseIcon} from './CloseIcon'
 import {ElevationChart} from './ElevationChart'
+import {FlightAltitudeChart} from './FlightAltitudeChart'
 import {PhotoShape} from './shapes'
+import {FLIGHT_PATH_COLOR} from '@/lib/flight-color'
+import {formatFeet} from '@/lib/elevation'
 import {formatMiles} from '@/lib/geo'
+import type {FlightSeriesSample} from '@/lib/flight-log'
 import {trackMiles} from '@/lib/track-mileage'
 import type {SanityImageSource} from '@sanity/image-url'
-import {infoCardCoverImage, infoCardLightboxImage, sanityImageAlt} from '@/lib/sanity/image'
+import {infoCardCoverImage, infoCardLightboxImage, sanityImageAlt, urlFor} from '@/lib/sanity/image'
 import {lineCoordinates, type MapData, type SelectedItem} from '@/lib/sanity/types'
 import {trackColor} from '@/lib/track-color'
 
@@ -16,7 +20,11 @@ type Props = {
   data: MapData
   selected: SelectedItem
   onClose: () => void
+  onFlightScrub?: (sample: FlightSeriesSample | null) => void
+  onOpenPhoto?: (id: string) => void
 }
+
+type LinkedPhoto = {_id: string; title?: string; photo?: {asset?: {_ref: string}}}
 
 type CardModel = {
   title: string
@@ -44,7 +52,41 @@ function activityLabel(activity: string) {
   return 'Track'
 }
 
+function formatDuration(seconds?: number) {
+  if (seconds == null || !Number.isFinite(seconds)) return null
+  const m = Math.floor(seconds / 60)
+  const s = Math.round(seconds % 60)
+  if (m <= 0) return `${s}s`
+  return s > 0 ? `${m}m ${s}s` : `${m}m`
+}
+
 function cardModel(data: MapData, selected: SelectedItem): CardModel | null {
+  if (selected.kind === 'flight') {
+    const flight = data.flights.find((item) => item._id === selected.id)
+    if (!flight) return null
+    const when = formatDate(flight.startedAt)
+    const miles =
+      flight.distanceMeters != null && flight.distanceMeters > 0
+        ? formatMiles(flight.distanceMeters / 1609.344)
+        : null
+    const duration = formatDuration(flight.durationSeconds)
+    const maxHt =
+      flight.maxHeightMeters != null ? formatFeet(flight.maxHeightMeters * 3.28084) : null
+    const stats = [when, flight.place, duration, miles, maxHt ? `${maxHt} max` : null, flight.aircraft]
+      .filter((item): item is string => Boolean(item))
+    return {
+      title: flight.title,
+      eyebrow: 'Flight',
+      stats,
+      body: null,
+      image: null,
+      imageAlt: flight.title,
+      accent: FLIGHT_PATH_COLOR,
+      isPhoto: false,
+      dashed: false,
+    }
+  }
+
   if (selected.kind === 'track') {
     const track = data.tracks.find((item) => item._id === selected.id)
     if (!track) return null
@@ -143,19 +185,37 @@ function PointerColor({light}: {light: boolean}) {
   return <span ref={ref} hidden />
 }
 
-export function InfoCard({data, selected, onClose}: Props) {
+export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: Props) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [linkedPhotos, setLinkedPhotos] = useState<LinkedPhoto[]>([])
   const track = selected.kind === 'track' ? data.tracks.find((item) => item._id === selected.id) : undefined
+  const flight = selected.kind === 'flight' ? data.flights.find((item) => item._id === selected.id) : undefined
   const routeCoords = useMemo(() => (track ? lineCoordinates(track.route) : null), [track])
   const card = cardModel(data, selected)
+
+  useEffect(() => {
+    if (selected.kind !== 'flight') return
+    let cancelled = false
+    fetch(`/api/flight/${encodeURIComponent(selected.id)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((payload: {photos: LinkedPhoto[]}) => {
+        if (!cancelled) setLinkedPhotos(payload.photos ?? [])
+      })
+      .catch(() => !cancelled && setLinkedPhotos([]))
+    return () => {
+      cancelled = true
+    }
+  }, [selected.id, selected.kind])
+
   if (!card) return null
 
   const cover = card.image ? infoCardCoverImage(card.image) : null
 
   const share = async () => {
     const url = new URL('/map', window.location.origin)
-    url.searchParams.set(selected.kind === 'pin' ? 'photo' : 'track', selected.id)
+    const key = selected.kind === 'pin' ? 'photo' : selected.kind === 'flight' ? 'flight' : 'track'
+    url.searchParams.set(key, selected.id)
     try {
       if (navigator.share) {
         await navigator.share({title: card.title, url: url.toString()})
@@ -181,7 +241,8 @@ export function InfoCard({data, selected, onClose}: Props) {
   const headline = untitled ? (card.stats[0] ?? '') : card.title
   const chips = untitled ? card.stats.slice(1) : card.stats
   const hasRoute = Boolean(routeCoords && routeCoords.length >= 2)
-  const hasDetails = chips.length > 0 || Boolean(card.body) || hasRoute
+  const isFlight = selected.kind === 'flight' && Boolean(flight)
+  const hasDetails = chips.length > 0 || Boolean(card.body) || hasRoute || isFlight || linkedPhotos.length > 0
   const hasCaption = Boolean(headline) || Boolean(card.eyebrow)
 
   return (
@@ -279,7 +340,35 @@ export function InfoCard({data, selected, onClose}: Props) {
               {card.body}
             </p>
           ) : null}
+          {linkedPhotos.length > 0 ? (
+            <div className={`${chips.length || card.body ? 'mt-3' : ''} flex gap-2 overflow-x-auto pb-1`}>
+              {linkedPhotos.map((item) => {
+                const thumb = item.photo?.asset
+                  ? urlFor(item.photo).width(160).height(120).fit('crop').url()
+                  : null
+                return (
+                  <button
+                    key={item._id}
+                    type="button"
+                    onClick={() => onOpenPhoto?.(item._id)}
+                    className="h-16 w-20 shrink-0 overflow-hidden rounded-lg ring-1 ring-black/10"
+                    aria-label={item.title?.trim() || 'Linked photo'}
+                  >
+                    {thumb ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={thumb} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="flex h-full items-center justify-center bg-neutral-200 text-[10px] text-black/50">Photo</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
           {hasRoute && routeCoords ? <ElevationChart coords={routeCoords} color={card.accent} /> : null}
+          {isFlight && flight && onFlightScrub ? (
+            <FlightAltitudeChart key={flight._id} flightId={flight._id} onScrub={onFlightScrub} />
+          ) : null}
         </div>
       ) : null}
 

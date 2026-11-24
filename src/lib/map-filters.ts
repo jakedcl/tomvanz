@@ -1,8 +1,8 @@
-import {lineCoordinates, type MapData, type PinDoc, type TrackDoc} from '@/lib/sanity/types'
+import {lineCoordinates, type FlightDoc, type MapData, type PinDoc, type TrackDoc} from '@/lib/sanity/types'
 
 export type MapFilterState = {
   query: string
-  /** Empty means "everything". Values: `pin:all` (photos), `track:all` (routes), `track:hike`, … */
+  /** Empty means "everything". Values: `pin:all`, `track:all`, `flight:all`, `track:hike`, `flight:aircraft:…`, … */
   types: string[]
   /** Only photos shot with a drone. */
   drone: boolean
@@ -27,6 +27,14 @@ export function trackType(track: TrackDoc) {
   return `track:${track.activity}`
 }
 
+export function flightType() {
+  return 'flight:all'
+}
+
+export function flightAircraftType(aircraft: string) {
+  return `flight:aircraft:${aircraft.toLowerCase()}`
+}
+
 function dateOf(value?: string): number | null {
   if (!value) return null
   const time = new Date(value).getTime()
@@ -41,15 +49,25 @@ export function filterOptions(data: MapData) {
     .map((k) => `track:${k}`)
     .filter((value) => routeKinds.has(value))
     .map((value) => ({value, label: routeKinds.get(value)!}))
-  // Photos / Routes: one tap for "all of that sort" (only worth offering when both exist).
-  const groups: TypeOption[] =
-    data.pins.length > 0 && data.tracks.length > 0
-      ? [
-          {value: 'pin:all', label: 'Photos'},
-          {value: 'track:all', label: 'Routes'},
-        ]
+
+  const aircraftModels = new Map<string, string>()
+  for (const flight of data.flights) {
+    const model = flight.aircraft?.trim()
+    if (!model) continue
+    const key = flightAircraftType(model)
+    aircraftModels.set(key, model)
+  }
+  const aircraftChips: TypeOption[] =
+    aircraftModels.size > 1
+      ? [...aircraftModels.entries()].map(([value, label]) => ({value, label}))
       : []
-  const typeOptions: TypeOption[] = [...groups, ...kinds]
+
+  const groups: TypeOption[] = []
+  if (data.pins.length > 0) groups.push({value: 'pin:all', label: 'Photos'})
+  if (data.tracks.length > 0) groups.push({value: 'track:all', label: 'Routes'})
+  if (data.flights.length > 0) groups.push({value: 'flight:all', label: 'Flights'})
+
+  const typeOptions: TypeOption[] = [...groups, ...kinds, ...aircraftChips]
 
   const hasDrone = data.pins.some((pin) => pin.isDrone)
   return {typeOptions, hasDrone}
@@ -69,44 +87,61 @@ function matchesQuery(query: string, ...fields: (string | undefined)[]) {
   return q.split(/\s+/).every((word) => fields.some((field) => field?.toLowerCase().includes(word)))
 }
 
+function pinTypeOk(state: MapFilterState) {
+  if (state.types.length === 0) return true
+  return state.types.includes(pinType()) || state.types.includes('pin:all')
+}
+
+function trackTypeOk(state: MapFilterState, track: TrackDoc) {
+  if (state.types.length === 0) return true
+  const type = trackType(track)
+  return state.types.includes(type) || state.types.includes('track:all')
+}
+
+function flightTypeOk(state: MapFilterState, flight: FlightDoc) {
+  if (state.types.length === 0) return true
+  if (state.types.includes(flightType())) return true
+  if (flight.aircraft && state.types.includes(flightAircraftType(flight.aircraft))) return true
+  return false
+}
+
 export function applyMapFilters(data: MapData, state: MapFilterState): MapData {
   if (!filtersActive(state)) return data
-  // 'pin:all' / 'track:all' are the Photos / Routes group chips: every kind of that sort.
-  const typeOk = (type: string) =>
-    state.types.length === 0 ||
-    state.types.includes(type) ||
-    state.types.includes(type.startsWith('pin:') ? 'pin:all' : 'track:all')
   return {
     ...data,
     pins: data.pins.filter(
       (pin) =>
-        typeOk(pinType()) &&
+        pinTypeOk(state) &&
         (!state.drone || pin.isDrone === true) &&
         matchesQuery(state.query, pin.title, pin.note, pin.isDrone ? 'drone' : undefined),
     ),
-    // Routes aren't photos, so they drop out when only drone photos are wanted.
     tracks: data.tracks.filter(
       (track) =>
         !state.drone &&
-        typeOk(trackType(track)) &&
+        trackTypeOk(state, track) &&
         matchesQuery(state.query, track.title, TRACK_LABELS[track.activity]),
+    ),
+    flights: data.flights.filter(
+      (flight) =>
+        !state.drone &&
+        flightTypeOk(state, flight) &&
+        matchesQuery(state.query, flight.title, flight.place, flight.aircraft, 'flight', 'drone'),
     ),
   }
 }
 
 export type ResultItem = {
-  kind: 'pin' | 'track'
+  kind: 'pin' | 'track' | 'flight'
   id: string
   title: string
   label: string
   date: string | undefined
   photo: PinDoc['photo']
   miles: number | null
-  /** Routes: bike / hike / other, for the icon's colour. */
   activity?: TrackDoc['activity']
 }
 
-/** Everything that passed the filters as one list: routes newest first, then undated photos A–Z. */
+/** Everything that passed the filters as one list: routes and flights newest first, then undated photos A–Z. */
 export function resultList(shown: MapData, miles: (track: TrackDoc) => number | null): ResultItem[] {
   const items: ResultItem[] = [
     ...shown.pins.map<ResultItem>((pin) => ({
@@ -128,6 +163,15 @@ export function resultList(shown: MapData, miles: (track: TrackDoc) => number | 
       miles: miles(track),
       activity: track.activity,
     })),
+    ...shown.flights.map<ResultItem>((flight) => ({
+      kind: 'flight',
+      id: flight._id,
+      title: flight.title?.trim() || 'Untitled flight',
+      label: flight.aircraft?.trim() || 'Flight',
+      date: flight.startedAt,
+      photo: undefined,
+      miles: flight.distanceMeters != null ? flight.distanceMeters / 1609.344 : null,
+    })),
   ]
   const time = (item: ResultItem) => dateOf(item.date)
   return items.sort((a, b) => {
@@ -142,4 +186,8 @@ export function resultList(shown: MapData, miles: (track: TrackDoc) => number | 
 
 export function trackCoords(track: TrackDoc) {
   return lineCoordinates(track.route)
+}
+
+export function flightCoords(flight: FlightDoc) {
+  return lineCoordinates(flight.path)
 }

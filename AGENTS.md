@@ -28,10 +28,11 @@ Sanity project and dataset come from `NEXT_PUBLIC_SANITY_PROJECT_ID` and `NEXT_P
 - Sanity reads go through `src/lib/sanity/load.ts`: cached 60s, timeout + one retry, and guarded so a Sanity outage can't break the site (a build with Sanity down still succeeds with an empty map and a notice; a failed refresh keeps the last good homepage). `/` is a pre-built page with `revalidate = 60`. Studio edits show within ~1 min. Don't add uncached or unguarded Sanity fetches to the layout or `/`. Point uptime monitors at `/api/health` (never touches Sanity).
 
 - GPX routes are stored as JSON text, not geopoint arrays.
-- Content model: **Photo** (`photo`: image, title, location, note, takenAt, drone, plus a hidden `legacyId`) and **Route** (`track`). There is no separate pin type. `legacyId` holds the id an old pin had before the 2026-11 conversion, so shared links made with it still open the photo (`src/lib/shared-item.ts`).
+- Content model: **Photo** (`photo`: image, title, location, note, takenAt, optional `flight` reference, drone, plus a hidden `legacyId`), **Route** (`track`), and **Flight** (`flight`). There is no separate pin type. `legacyId` holds the id an old pin had before the 2026-11 conversion, so shared links made with it still open the photo (`src/lib/shared-item.ts`). Flights use shared links `?flight=`.
+- **Flight** documents store the original DJI `.txt` log, simplified `displayCoordinates` for the map (same JSON encoding as routes), and hidden `series` telemetry JSON for the altitude chart (~1 Hz: `t,lng,lat,height,speed,heading,gimbalPitch,battery,mode`). Distance is always from the decoded GPS track, never the log header. `series` is not in `mapQuery`; the card loads it from `/api/flight/[id]`. See field docs in `src/sanity/schemaTypes/flight.ts`.
 - Drone photos are detected from `DJI_*` file names (`src/lib/drone.ts`), with a manual override switch in the Studio.
-- Studio tools: **Bulk upload** (drop images and GPX files, fill in titles, and for routes bike/hike/other, remove any, then one button creates the Photos and Routes; photo GPS and date and route start time are read from the files).
-- Track colors come from the activity field: bike blue, hike green.
+- Studio tools: **Bulk upload** accepts photos, GPX routes, and DJI flight logs (`FlightRecord_*.txt` / `DJIFlightRecord_*.txt`). Flight logs upload to Sanity, then `/api/parse-flight` decodes them (requires a signed-in Studio user; v13+ logs need `DJI_API_KEY` on the server only — never `NEXT_PUBLIC_` or client code). Photos taken during a flight link automatically via `takenAt` (±5s / +15s window).
+- Track colors come from the activity field: bike blue, hike green. Flight paths use one accent color (`src/lib/flight-color.ts`).
 
 ## Repo facts
 
