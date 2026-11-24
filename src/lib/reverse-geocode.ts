@@ -25,45 +25,19 @@ const LANDMARK_ADDRESS_TYPES = new Set([
   'lake',
 ])
 
-/** Most specific first; names with County / NYC borough admin labels are skipped when a finer field exists. */
-export const LOCALITY_KEYS = [
-  'neighbourhood',
-  'quarter',
-  'hamlet',
-  'suburb',
-  'village',
-  'town',
-  'city_district',
-  'city',
-  'municipality',
-] as const
-
-const NYC_BOROUGH_LABELS = new Set([
+export const NYC_BOROUGH_NAMES = new Set([
   'Bronx',
   'The Bronx',
   'Brooklyn',
   'Manhattan',
   'Queens',
   'Staten Island',
-  'Richmond County',
-  'Kings County',
-  'New York County',
-  'Bronx County',
-  'Queens County',
 ])
 
-/** County-level or borough admin names — not used as auto-titles when a finer locality exists. */
-export function isSkippableLocality(value: string, key?: string): boolean {
-  const trimmed = value.trim()
-  if (!trimmed) return true
-  if (/county/i.test(trimmed)) return true
-  if (key === 'city_district' && NYC_BOROUGH_LABELS.has(trimmed)) return true
-  if (NYC_BOROUGH_LABELS.has(trimmed) && key === 'suburb') return true
-  return false
-}
+const MUNICIPAL_PREFIX = /^(town of|city of|village of)\s+/i
 
 /** Bump when label selection rules change so cached strings refresh. */
-const GEOCODE_CACHE_VERSION = 'v2'
+const GEOCODE_CACHE_VERSION = 'v3'
 
 /** ~110 m grid — good enough for takeoff labels without hammering Nominatim. */
 export function geocodeCacheKey(lat: number, lng: number): string {
@@ -89,13 +63,85 @@ type NominatimReverse = {
   address?: Record<string, string>
 }
 
+export function isCountyName(value: string): boolean {
+  return /county/i.test(value.trim())
+}
+
+/** @deprecated Use isCountyName; kept for existing tests. */
+export function isSkippableLocality(value: string): boolean {
+  return isCountyName(value)
+}
+
+export function stripMunicipalPrefix(value: string): string {
+  return value.replace(MUNICIPAL_PREFIX, '').trim()
+}
+
+/** Trim street clutter; never append region/state. */
+export function normalizePlaceTitle(raw?: string): string | undefined {
+  if (!raw?.trim()) return undefined
+  let s = raw.trim()
+  s = s.replace(/^\d+[\s,]+/, '')
+  s = s
+    .replace(/\d{1,6}\s+[\w\s]+(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Lane|Ln|Way|Court|Ct)\b/gi, '')
+    .trim()
+  const first = s.split(',')[0]?.trim()
+  if (!first || isCountyName(first)) return undefined
+  return first.slice(0, 80)
+}
+
+function acceptPlaceName(raw: string, stripMunicipal = false): string | undefined {
+  const value = stripMunicipal ? stripMunicipalPrefix(raw) : raw
+  return normalizePlaceTitle(value)
+}
+
 /** Single-name place title (no state, no county) for auto-titles and `place` fields. */
 export function placeTitleFromAddress(addr: Record<string, string>): string | undefined {
-  for (const key of LOCALITY_KEYS) {
+  for (const key of ['neighbourhood', 'quarter'] as const) {
     const value = addr[key]?.trim()
-    if (!value || isSkippableLocality(value, key)) continue
-    return normalizePlaceTitle(value)
+    if (!value) continue
+    const title = acceptPlaceName(value)
+    if (title) return title
   }
+
+  const suburb = addr.suburb?.trim()
+  if (suburb && !isCountyName(suburb) && !NYC_BOROUGH_NAMES.has(suburb)) {
+    const title = acceptPlaceName(suburb)
+    if (title) return title
+  }
+
+  for (const key of ['village'] as const) {
+    const value = addr[key]?.trim()
+    if (!value) continue
+    const title = acceptPlaceName(value)
+    if (title) return title
+  }
+
+  const town = addr.town?.trim()
+  if (town) {
+    const title = acceptPlaceName(town, true)
+    if (title) return title
+  }
+
+  const hamlet = addr.hamlet?.trim()
+  if (hamlet) {
+    const title = acceptPlaceName(hamlet)
+    if (title) return title
+  }
+
+  for (const key of ['suburb', 'city_district', 'borough', 'city'] as const) {
+    const value = addr[key]?.trim()
+    if (!value || !NYC_BOROUGH_NAMES.has(value)) continue
+    const title = acceptPlaceName(value)
+    if (title) return title
+  }
+
+  for (const key of ['city', 'municipality'] as const) {
+    const value = addr[key]?.trim()
+    if (!value) continue
+    const title = acceptPlaceName(value)
+    if (title) return title
+  }
+
   return undefined
 }
 
@@ -109,8 +155,8 @@ export function pickLocalityLabel(data: NominatimReverse): string | undefined {
 
   const addressType = (data.addresstype ?? data.type ?? '').toLowerCase()
   if (!LANDMARK_ADDRESS_TYPES.has(addressType) && data.name?.trim()) {
-    const name = data.name.trim()
-    if (!isSkippableLocality(name)) return normalizePlaceTitle(name)
+    const title = acceptPlaceName(data.name)
+    if (title) return title
   }
 
   return fallbackFromDisplayName(data.display_name)
@@ -119,20 +165,8 @@ export function pickLocalityLabel(data: NominatimReverse): string | undefined {
 function fallbackFromDisplayName(raw?: string): string | undefined {
   if (!raw?.trim()) return undefined
   const first = raw.split(',')[0]?.trim()
-  if (!first || isSkippableLocality(first)) return undefined
-  return normalizePlaceTitle(first)
-}
-
-/** Trim street clutter; never append region/state. */
-export function normalizePlaceTitle(raw?: string): string | undefined {
-  if (!raw?.trim()) return undefined
-  let s = raw.trim()
-  s = s.replace(/^\d+[\s,]+/, '')
-  s = s
-    .replace(/\d{1,6}\s+[\w\s]+(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Lane|Ln|Way|Court|Ct)\b/gi, '')
-    .trim()
-  const first = s.split(',')[0]?.trim()
-  return first ? first.slice(0, 80) : undefined
+  if (!first) return undefined
+  return acceptPlaceName(first)
 }
 
 export async function reverseGeocodePlace(lat: number, lng: number): Promise<string | undefined> {

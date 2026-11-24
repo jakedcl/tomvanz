@@ -1,4 +1,6 @@
-/** Stable map UI dates — same output on server and client (UTC calendar day). */
+/** Stable map UI dates — en-US + Eastern, same on server and client for Tom's map content. */
+export const MAP_DATE_TIME_ZONE = 'America/New_York'
+
 export function formatMapDate(value?: string): string | null {
   if (!value) return null
   const date = new Date(value)
@@ -7,6 +9,6 @@ export function formatMapDate(value?: string): string | null {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
-    timeZone: 'UTC',
+    timeZone: MAP_DATE_TIME_ZONE,
   })
 }

@@ -1,6 +1,12 @@
 import {describe, expect, it} from 'vitest'
 
-import {isSkippableLocality, pickLocalityLabel, placeTitleFromAddress} from './reverse-geocode'
+import {
+  isCountyName,
+  isSkippableLocality,
+  pickLocalityLabel,
+  placeTitleFromAddress,
+  stripMunicipalPrefix,
+} from './reverse-geocode'
 
 describe('pickLocalityLabel', () => {
   it('uses neighbourhood without state (Emerson Hill)', () => {
@@ -24,14 +30,23 @@ describe('pickLocalityLabel', () => {
     expect(label).toBe('Todt Hill')
   })
 
-  it('uses town name without state (Saugerties)', () => {
+  it('Staten Island when suburb is the borough and city is New York', () => {
     const label = pickLocalityLabel({
-      address: {town: 'Saugerties', county: 'Ulster County', state: 'New York'},
+      address: {suburb: 'Staten Island', city: 'New York', state: 'New York'},
+    })
+    expect(label).toBe('Staten Island')
+  })
+
+  it('Saugerties: town beats peak hamlet', () => {
+    const label = pickLocalityLabel({
+      name: 'Blue Mountain',
+      addresstype: 'peak',
+      address: {hamlet: 'Blue Mountain', town: 'Town of Saugerties', state: 'New York'},
     })
     expect(label).toBe('Saugerties')
   })
 
-  it('skips suburb when it is a county name', () => {
+  it('skips Richmond County suburb and falls back to borough city', () => {
     const label = pickLocalityLabel({
       address: {suburb: 'Richmond County', city: 'Staten Island', state: 'New York'},
     })
@@ -48,16 +63,24 @@ describe('pickLocalityLabel', () => {
   })
 })
 
-describe('isSkippableLocality', () => {
-  it('flags county and Richmond County suburb', () => {
-    expect(isSkippableLocality('Ulster County')).toBe(true)
-    expect(isSkippableLocality('Richmond County', 'suburb')).toBe(true)
-    expect(isSkippableLocality('Todt Hill', 'hamlet')).toBe(false)
+describe('isCountyName', () => {
+  it('flags county names', () => {
+    expect(isCountyName('Ulster County')).toBe(true)
+    expect(isCountyName('Richmond County')).toBe(true)
+    expect(isSkippableLocality('Richmond County')).toBe(true)
+    expect(isCountyName('Todt Hill')).toBe(false)
+  })
+})
+
+describe('stripMunicipalPrefix', () => {
+  it('strips town/village prefixes', () => {
+    expect(stripMunicipalPrefix('Town of Saugerties')).toBe('Saugerties')
   })
 })
 
 describe('placeTitleFromAddress', () => {
   it('walks keys in priority order', () => {
+    expect(placeTitleFromAddress({town: 'Town of Saugerties', hamlet: 'Blue Mountain'})).toBe('Saugerties')
     expect(placeTitleFromAddress({hamlet: 'Todt Hill', suburb: 'Richmond County'})).toBe('Todt Hill')
   })
 })
