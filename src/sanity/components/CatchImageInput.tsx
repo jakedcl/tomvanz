@@ -4,7 +4,9 @@ import {useEffect, useRef, useState} from 'react'
 import {Button, Card, Flex, Stack, Text} from '@sanity/ui'
 import exifr from 'exifr'
 import {PatchEvent, set, unset, useClient, useFormValue, type ObjectInputProps} from 'sanity'
+import {patchTitleIfEmpty, photoTitleFallback, titleFromCoordinates} from '@/lib/auto-title'
 import {readPhotoMeta} from '../../lib/bulk-upload'
+import {postReverseGeocodePlace} from '@/lib/reverse-geocode-client'
 
 type GpsStatus = 'idle' | 'found' | 'missing' | 'manual'
 
@@ -18,6 +20,7 @@ export function CatchImageInput(props: ObjectInputProps) {
   const client = useClient({apiVersion: '2026-01-01'})
   const documentId = useFormValue(['_id']) as string | undefined
   const location = useFormValue(['location']) as {lat?: number; lng?: number} | undefined
+  const currentTitle = useFormValue(['title']) as string | undefined
   const [status, setStatus] = useState<GpsStatus>('idle')
   const lastAsset = useRef<string | undefined>(undefined)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -90,6 +93,25 @@ export function CatchImageInput(props: ObjectInputProps) {
     // own copy of the file's metadata is deliberately not asked for: it is publicly readable.)
     const {takenAt} = await readPhotoMeta(file)
     if (takenAt) await patchTakenAt(takenAt)
+
+    if (!currentTitle?.trim() && documentId) {
+      const draftId = documentId.startsWith('drafts.') ? documentId : `drafts.${documentId}`
+      const fallback = photoTitleFallback(file.name)
+      const token = client.config().token
+      let suggestedTitle = fallback
+      if (gps?.latitude != null && gps?.longitude != null && token) {
+        suggestedTitle = await titleFromCoordinates(
+          gps.latitude,
+          gps.longitude,
+          (lat, lng) => postReverseGeocodePlace(lat, lng, token),
+          fallback,
+        )
+      }
+      const titlePatch = patchTitleIfEmpty(currentTitle, suggestedTitle)
+      if (Object.keys(titlePatch).length > 0) {
+        await client.patch(draftId).set(titlePatch).commit()
+      }
+    }
 
     const asset = await client.assets.upload('image', file, {filename: file.name})
     props.onChange(

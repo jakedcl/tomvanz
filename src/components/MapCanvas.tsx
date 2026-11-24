@@ -1,14 +1,15 @@
 'use client'
 
-import {useEffect, useRef} from 'react'
-import {createRoot, type Root} from 'react-dom/client'
-import {LngLatBounds, Map as MapLibreMap, Marker, NavigationControl, Popup} from 'maplibre-gl'
+import {useCallback, useEffect, useRef} from 'react'
+import {LngLatBounds, Map as MapLibreMap, Marker, NavigationControl} from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import '@/lib/maplibre-worker'
-import {InfoCard} from './InfoCard'
+import {pinViewPadding, shouldFlyToSelection, trackFitPadding} from '@/lib/map-focus'
 import {urlFor} from '@/lib/sanity/image'
 import {PILE_FIT_MAX_ZOOM, pileTolerancePx} from '@/lib/pile'
+import {FLIGHT_PATH_COLOR} from '@/lib/flight-color'
 import {trackColor} from '@/lib/track-color'
+import type {FlightSeriesSample} from '@/lib/flight-log'
 import {lineCoordinates, type MapData, type PinDoc, SelectedItem} from '@/lib/sanity/types'
 import type {StyleSpecification} from 'maplibre-gl'
 
@@ -49,6 +50,9 @@ type Props = {
   /** Called with the ids of a pile of photos that zooming can't pull apart. */
   onPile: (ids: string[]) => void
   onMapError: () => void
+  /** Height of the bottom detail panel so routes fit above it. */
+  panelHeight?: number
+  onRegisterFlightScrub?: (handler: (sample: FlightSeriesSample | null) => void) => void
 }
 
 /** Marker for a photo that has no picture to show as a thumbnail. */
@@ -63,6 +67,11 @@ function selectionPoint(data: MapData, selected: SelectedItem): [number, number]
   }
   if (selected.lng != null && selected.lat != null) {
     return [selected.lng, selected.lat]
+  }
+  if (selected.kind === 'flight') {
+    const flight = data.flights.find((item) => item._id === selected.id)
+    if (!flight) return null
+    return lineCoordinates(flight.path)[0] ?? null
   }
   const track = data.tracks.find((item) => item._id === selected.id)
   if (!track) return null
@@ -151,17 +160,22 @@ function focusSelection(
   data: MapData,
   selected: SelectedItem,
   duration: number,
+  panelHeight: number,
 ) {
-  if (selected.kind === 'track') {
-    if (!selected.fly) return
-    const track = data.tracks.find((item) => item._id === selected.id)
-    if (!track) return
+  if (!shouldFlyToSelection(selected)) return
+
+  const mapHeight = map.getContainer().clientHeight
+  if (selected.kind === 'track' || selected.kind === 'flight') {
+    const line =
+      selected.kind === 'track'
+        ? data.tracks.find((item) => item._id === selected.id)?.route
+        : data.flights.find((item) => item._id === selected.id)?.path
+    if (!line) return
     const bounds = new LngLatBounds()
-    for (const [lng, lat] of lineCoordinates(track.route)) bounds.extend([lng, lat])
+    for (const [lng, lat] of lineCoordinates(line)) bounds.extend([lng, lat])
     if (bounds.isEmpty()) return
     map.fitBounds(bounds, {
-      // The card opens above the route's start, so leave it room (it's taller for routes with an elevation chart).
-      padding: {top: Math.min(500, Math.round(map.getContainer().clientHeight * 0.7)), bottom: 60, left: 40, right: 40},
+      padding: trackFitPadding(mapHeight, panelHeight),
       maxZoom: 15,
       duration,
     })
@@ -171,21 +185,28 @@ function focusSelection(
   if (!point) return
   map.easeTo({
     center: point,
-    offset: [0, pinDrop(map)],
     zoom: Math.max(map.getZoom(), 11),
+    padding: pinViewPadding(panelHeight),
     duration,
   })
-}
-
-/** How far below the map's centre a selected photo sits, leaving room for its card above it. */
-function pinDrop(map: MapLibreMap) {
-  return Math.min(170, Math.round(map.getContainer().clientHeight * 0.24))
 }
 
 function hitLayerIds(map: MapLibreMap): string[] {
   return (map.getStyle()?.layers ?? [])
     .map((layer) => layer.id)
-    .filter((id) => id.startsWith('track-hit-'))
+    .filter((id) => id.startsWith('track-hit-') || id.startsWith('flight-hit-'))
+}
+
+function flightScrubMarkerEl(heading: number): HTMLDivElement {
+  const el = document.createElement('div')
+  el.style.width = '0'
+  el.style.height = '0'
+  el.style.pointerEvents = 'none'
+  el.innerHTML = `<div style="position:relative;width:44px;height:44px;margin:-22px 0 0 -22px;transform:rotate(${heading}deg)">
+    <div style="position:absolute;left:50%;top:4px;width:0;height:0;margin-left:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-bottom:22px solid rgba(217,119,6,0.85);filter:drop-shadow(0 1px 2px rgba(0,0,0,0.35))"></div>
+    <div style="position:absolute;left:50%;top:20px;width:10px;height:10px;margin-left:-5px;border-radius:50%;background:#fff;border:2px solid #d97706"></div>
+  </div>`
+  return el
 }
 
 export function MapCanvas({
@@ -197,10 +218,13 @@ export function MapCanvas({
   onSelect,
   onPile,
   onMapError,
+  panelHeight = 0,
+  onRegisterFlightScrub,
 }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const markersRef = useRef<Map<string, Marker>>(new Map())
+  const flightScrubRef = useRef<Marker | null>(null)
   const onSelectRef = useRef(onSelect)
   const onPileRef = useRef(onPile)
   const onThreeDGestureRef = useRef(onThreeDGesture)
@@ -213,6 +237,11 @@ export function MapCanvas({
   const onMapErrorRef = useRef(onMapError)
   const dataRef = useRef(data)
   const threeDRef = useRef(threeD)
+  const panelHeightRef = useRef(panelHeight)
+
+  useEffect(() => {
+    panelHeightRef.current = panelHeight
+  }, [panelHeight])
 
   useEffect(() => {
     selectedRef.current = selected
@@ -229,8 +258,33 @@ export function MapCanvas({
     onSelect: onSelectRef.current,
     onPile: onPileRef.current,
     getActiveId: () => activeIdRef.current,
-    getSelectedId: () => (selectedRef.current?.kind === 'pin' ? selectedRef.current.id : null),
   })
+
+  const onFlightScrub = useCallback((sample: FlightSeriesSample | null) => {
+    const map = mapRef.current
+    if (!map || !readyRef.current) return
+    if (!sample) {
+      flightScrubRef.current?.remove()
+      flightScrubRef.current = null
+      return
+    }
+    if (!flightScrubRef.current) {
+      const el = flightScrubMarkerEl(sample.heading)
+      flightScrubRef.current = new Marker({element: el, anchor: 'center'}).setLngLat([sample.lng, sample.lat]).addTo(map)
+      return
+    }
+    flightScrubRef.current.setLngLat([sample.lng, sample.lat])
+    flightScrubRef.current.getElement().innerHTML = flightScrubMarkerEl(sample.heading).innerHTML
+  }, [])
+
+  useEffect(() => {
+    onRegisterFlightScrub?.(onFlightScrub)
+  }, [onFlightScrub, onRegisterFlightScrub])
+
+  useEffect(() => {
+    flightScrubRef.current?.remove()
+    flightScrubRef.current = null
+  }, [selected?.id, selected?.kind])
 
   useEffect(() => {
     const node = rootRef.current
@@ -262,12 +316,14 @@ export function MapCanvas({
       if (layers.length) {
         const hit = map.queryRenderedFeatures(event.point, {layers})[0]
         const id = hit?.properties?.id
+        const layerId = hit?.layer?.id ?? ''
         if (typeof id === 'string' && id) {
           onSelectRef.current({
-            kind: 'track',
+            kind: layerId.startsWith('flight-hit-') ? 'flight' : 'track',
             id,
             lng: event.lngLat.lng,
             lat: event.lngLat.lat,
+            fly: true,
           })
           return
         }
@@ -288,7 +344,7 @@ export function MapCanvas({
       // The first draw fits everything in view; later redraws (search, filters) leave the camera alone.
       syncMap(map, dataRef.current, pinCtx(), markersRef, true)
       if (selectedRef.current) {
-        focusSelection(map, dataRef.current, selectedRef.current, 0)
+        focusSelection(map, dataRef.current, selectedRef.current, 0, panelHeightRef.current)
       }
       if (threeDRef.current) applyThreeD(map, true)
       // Start with the credits collapsed to a small (i) button; they still open on tap.
@@ -339,7 +395,6 @@ export function MapCanvas({
     markersRef.current.forEach((marker) => {
       const el = marker.getElement()
       el.dataset.active = el.dataset.id === activeIdRef.current ? 'true' : 'false'
-      el.dataset.selected = selected?.kind === 'pin' && el.dataset.id === selected.id ? 'true' : 'false'
     })
   }, [selected, highlightId, data])
 
@@ -348,109 +403,24 @@ export function MapCanvas({
     if (!map || !readyRef.current) return
     const style = map.getStyle()
     for (const layer of style?.layers ?? []) {
-      if (!layer.id.startsWith('track-line-')) continue
-      const id = layer.id.slice('track-line-'.length)
-      const on = selected?.kind === 'track' && selected.id === id
-      map.setPaintProperty(layer.id, 'line-width', on ? 4.5 : 2.5)
+      if (layer.id.startsWith('track-line-')) {
+        const id = layer.id.slice('track-line-'.length)
+        const on = selected?.kind === 'track' && selected.id === id
+        map.setPaintProperty(layer.id, 'line-width', on ? 4.5 : 2.5)
+      }
+      if (layer.id.startsWith('flight-line-')) {
+        const id = layer.id.slice('flight-line-'.length)
+        const on = selected?.kind === 'flight' && selected.id === id
+        map.setPaintProperty(layer.id, 'line-width', on ? 4.5 : 2.5)
+      }
     }
   }, [selected, data])
 
   useEffect(() => {
     const map = mapRef.current
     if (!map || !readyRef.current || !selected) return
-    focusSelection(map, data, selected, 500)
-  }, [selected, data])
-
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map || !selected) return
-    const lngLat = selectionPoint(data, selected)
-    if (!lngLat) return
-
-    const node = document.createElement('div')
-    // The card can be at most as tall as the space above the photo, then it scrolls.
-    node.style.setProperty('--card-max', `${Math.max(220, Math.round(map.getContainer().clientHeight / 2 + pinDrop(map) - 56))}px`)
-    const root: Root = createRoot(node)
-    root.render(
-      <InfoCard
-        data={data}
-        selected={selected}
-        onClose={() => onSelectRef.current(null)}
-      />,
-    )
-
-    const popup = new Popup({
-      closeButton: false,
-      closeOnClick: false,
-      offset: 2,
-      maxWidth: 'none',
-      className: 'tv-popup',
-      anchor: 'bottom',
-      focusAfterOpen: false,
-    })
-      .setLngLat(lngLat)
-      .setDOMContent(node)
-      .addTo(map)
-
-    // Keep the card fully on screen: on a phone it's nearly as wide as the map, so slide it
-    // sideways when the photo it belongs to is off-centre.
-    const content = popup.getElement().querySelector<HTMLElement>('.maplibregl-popup-content')
-    const keepOnScreen = () => {
-      if (!content) return
-      content.style.translate = '0px 0px'
-      const card = content.getBoundingClientRect()
-      const view = map.getContainer().getBoundingClientRect()
-      const margin = 12
-      let dx = 0
-      if (card.left < view.left + margin) dx = view.left + margin - card.left
-      else if (card.right > view.right - margin) dx = view.right - margin - card.right
-      content.style.translate = `${Math.round(dx)}px 0px`
-    }
-    // The card sits on top of the map, so it would swallow the scroll wheel and zoom would stall
-    // whenever it ends up under the cursor. Hand the wheel to the map instead, unless the card
-    // itself is tall enough to scroll and still has room to scroll that way.
-    const popupEl = popup.getElement()
-    const canvasContainer = map.getCanvasContainer()
-    const passWheelToMap = (event: WheelEvent) => {
-      const cardEl = popupEl.querySelector('article')
-      if (cardEl && cardEl.scrollHeight > cardEl.clientHeight + 1) {
-        const atTop = cardEl.scrollTop <= 0
-        const atBottom = cardEl.scrollTop + cardEl.clientHeight >= cardEl.scrollHeight - 1
-        if (event.deltaY < 0 ? !atTop : !atBottom) return
-      }
-      event.preventDefault()
-      canvasContainer.dispatchEvent(
-        new WheelEvent('wheel', {
-          bubbles: true,
-          cancelable: true,
-          clientX: event.clientX,
-          clientY: event.clientY,
-          deltaX: event.deltaX,
-          deltaY: event.deltaY,
-          deltaZ: event.deltaZ,
-          deltaMode: event.deltaMode,
-          ctrlKey: event.ctrlKey,
-          shiftKey: event.shiftKey,
-          altKey: event.altKey,
-          metaKey: event.metaKey,
-        }),
-      )
-    }
-    popupEl.addEventListener('wheel', passWheelToMap, {passive: false})
-
-    map.on('move', keepOnScreen)
-    const resizeWatcher = new ResizeObserver(keepOnScreen)
-    resizeWatcher.observe(node)
-    requestAnimationFrame(keepOnScreen)
-
-    return () => {
-      map.off('move', keepOnScreen)
-      popupEl.removeEventListener('wheel', passWheelToMap)
-      resizeWatcher.disconnect()
-      popup.remove()
-      queueMicrotask(() => root.unmount())
-    }
-  }, [selected, data])
+    focusSelection(map, data, selected, 500, panelHeight)
+  }, [selected, data, panelHeight])
 
   return <div ref={rootRef} className="isolate h-full w-full" />
 }
@@ -462,14 +432,17 @@ function clearTrackLayers(map: MapLibreMap) {
     if (
       layer.id.startsWith('track-line-') ||
       layer.id.startsWith('track-casing-') ||
-      layer.id.startsWith('track-hit-')
+      layer.id.startsWith('track-hit-') ||
+      layer.id.startsWith('flight-line-') ||
+      layer.id.startsWith('flight-casing-') ||
+      layer.id.startsWith('flight-hit-')
     ) {
       if (map.getLayer(layer.id)) map.removeLayer(layer.id)
     }
   }
   const sources = style.sources ? Object.keys(style.sources) : []
   for (const id of sources) {
-    if (id.startsWith('track-src-')) {
+    if (id.startsWith('track-src-') || id.startsWith('flight-src-')) {
       if (map.getSource(id)) map.removeSource(id)
     }
   }
@@ -559,6 +532,60 @@ function syncMap(
     }
   }
 
+  for (const flight of data.flights) {
+    const coords = lineCoordinates(flight.path)
+    if (coords.length < 2) continue
+    const color = FLIGHT_PATH_COLOR
+    const sourceId = `flight-src-${flight._id}`
+    const layerId = `flight-line-${flight._id}`
+    const hitId = `flight-hit-${flight._id}`
+    map.addSource(sourceId, {
+      type: 'geojson',
+      data: {
+        type: 'Feature',
+        properties: {id: flight._id},
+        geometry: {type: 'LineString', coordinates: coords},
+      },
+    })
+    const casingId = `flight-casing-${flight._id}`
+    map.addLayer({
+      id: casingId,
+      type: 'line',
+      source: sourceId,
+      layout: {'line-join': 'round', 'line-cap': 'round'},
+      paint: {
+        'line-color': '#ffffff',
+        'line-width': 6,
+        'line-opacity': 0.88,
+      },
+    })
+    map.addLayer({
+      id: hitId,
+      type: 'line',
+      source: sourceId,
+      layout: {'line-join': 'round', 'line-cap': 'round'},
+      paint: {
+        'line-color': color,
+        'line-width': 18,
+        'line-opacity': 0,
+      },
+    })
+    map.addLayer({
+      id: layerId,
+      type: 'line',
+      source: sourceId,
+      layout: {'line-join': 'round', 'line-cap': 'round'},
+      paint: {
+        'line-color': color,
+        'line-width': 2.5,
+      },
+    })
+    for (const [lng, lat] of coords) {
+      bounds.extend([lng, lat])
+      hasPoint = true
+    }
+  }
+
   for (const pin of data.pins) {
     bounds.extend([pin.location.lng, pin.location.lat])
     hasPoint = true
@@ -581,8 +608,6 @@ type PinRenderCtx = {
   onSelect: (item: SelectedItem | null) => void
   onPile: (ids: string[]) => void
   getActiveId: () => string | null
-  /** The photo whose card is open; its thumbnail steps aside so the card's arrow points at the spot. */
-  getSelectedId: () => string | null
 }
 
 /**
@@ -620,7 +645,6 @@ function renderPins(
     el.dataset.kind = 'pin'
     el.dataset.id = pin._id
     el.dataset.active = ctx.getActiveId() === pin._id ? 'true' : 'false'
-    el.dataset.selected = ctx.getSelectedId() === pin._id ? 'true' : 'false'
     el.setAttribute('aria-label', pin.title?.trim() || 'Photo')
     // Later pins sit on top, exactly as when every marker was added in order.
     el.style.zIndex = String(index)

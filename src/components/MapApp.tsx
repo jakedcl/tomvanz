@@ -2,9 +2,12 @@
 
 import {useCallback, useDeferredValue, useEffect, useMemo, useRef, useState} from 'react'
 import dynamic from 'next/dynamic'
+import {InfoCard} from './InfoCard'
+import {MapDetailPanel} from './MapDetailPanel'
 import {ThreeDButton} from './ThreeDButton'
 import {MapSearch} from './MapSearch'
 import {PileStrip} from './PileStrip'
+import type {FlightSeriesSample} from '@/lib/flight-log'
 import {trackMiles} from '@/lib/track-mileage'
 import {
   applyMapFilters,
@@ -51,6 +54,12 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
   const [threeD, setThreeD] = useState(false)
   const [hint, setHint] = useState<'touch' | 'mouse' | null>(null)
   const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [panelHeight, setPanelHeight] = useState(0)
+  const flightScrubRef = useRef<((sample: FlightSeriesSample | null) => void) | null>(null)
+  const onPanelHeight = useCallback((height: number) => setPanelHeight(height), [])
+  const registerFlightScrub = useCallback((handler: (sample: FlightSeriesSample | null) => void) => {
+    flightScrubRef.current = handler
+  }, [])
 
   useEffect(() => () => {
     if (hintTimer.current) clearTimeout(hintTimer.current)
@@ -93,23 +102,34 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
     const url = new URL(window.location.href)
     url.searchParams.delete('photo')
     url.searchParams.delete('track')
-    if (selected) url.searchParams.set(selected.kind === 'pin' ? 'photo' : 'track', selected.id)
+    url.searchParams.delete('flight')
+    if (selected) {
+      const key = selected.kind === 'pin' ? 'photo' : selected.kind === 'flight' ? 'flight' : 'track'
+      url.searchParams.set(key, selected.id)
+    }
     window.history.replaceState(window.history.state, '', url)
   }, [selected])
 
   const pickResult = useCallback((item: ResultItem) => {
     setPileIds(null)
-    setSelected(item.kind === 'pin' ? {kind: 'pin', id: item.id} : {kind: 'track', id: item.id, fly: true})
+    setSelected(
+      item.kind === 'pin'
+        ? {kind: 'pin', id: item.id}
+        : item.kind === 'flight'
+          ? {kind: 'flight', id: item.id, fly: true}
+          : {kind: 'track', id: item.id, fly: true},
+    )
     // Close the results list so it isn't covering the card; the filters stay applied.
     setSearchKey((key) => key + 1)
   }, [])
 
-  const total = allData.tracks.length + allData.pins.length
-  const matching = data.tracks.length + data.pins.length
+  const total = allData.tracks.length + allData.flights.length + allData.pins.length
+  const matching = data.tracks.length + data.flights.length + data.pins.length
 
   const selectedStillVisible = useMemo(() => {
     if (!selected) return false
     if (selected.kind === 'track') return data.tracks.some((item) => item._id === selected.id)
+    if (selected.kind === 'flight') return data.flights.some((item) => item._id === selected.id)
     return data.pins.some((item) => item._id === selected.id)
   }, [selected, data])
 
@@ -119,6 +139,8 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
     <div
       className="relative h-full w-full overflow-hidden bg-[#e8e8e8]"
       data-strip={pilePins && pilePins.length > 1 && !card ? 'true' : 'false'}
+      data-detail-open={card ? 'true' : 'false'}
+      style={card ? ({['--detail-panel-height' as string]: `${panelHeight}px`}) : undefined}
     >
       {mapFailed ? (
         <div className="flex h-full items-center justify-center text-[14px] text-black/70">
@@ -134,6 +156,8 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
           onSelect={select}
           onPile={openPile}
           onMapError={() => setMapFailed(true)}
+          panelHeight={card ? panelHeight : 0}
+          onRegisterFlightScrub={registerFlightScrub}
         />
       )}
       {!mapFailed ? (
@@ -144,7 +168,7 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
           typeOptions={options.typeOptions}
           hasDrone={options.hasDrone}
           results={results}
-          total={allData.pins.length + allData.tracks.length}
+          total={allData.pins.length + allData.tracks.length + allData.flights.length}
           onPick={pickResult}
         />
       ) : null}
@@ -188,6 +212,17 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
           onOpen={(id) => select({kind: 'pin', id})}
           onClose={() => select(null)}
         />
+      ) : null}
+      {card && data ? (
+        <MapDetailPanel onHeightChange={onPanelHeight}>
+          <InfoCard
+            data={data}
+            selected={card}
+            onClose={() => select(null)}
+            onFlightScrub={(sample) => flightScrubRef.current?.(sample)}
+            onOpenPhoto={(id) => select({kind: 'pin', id})}
+          />
+        </MapDetailPanel>
       ) : null}
     </div>
   )

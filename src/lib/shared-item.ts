@@ -19,5 +19,16 @@ export function sharedItem(data: MapData, params: {[key: string]: string | strin
       return {selected: {kind: 'track', id: track._id, fly: true} as SelectedItem, title: track.title, photo: track.photo}
     }
   }
+  const flightId = first(params.flight)
+  if (flightId) {
+    const flight = data.flights.find((item) => item._id === flightId)
+    if (flight) {
+      return {
+        selected: {kind: 'flight', id: flight._id, fly: true} as SelectedItem,
+        title: flight.title,
+        photo: undefined,
+      }
+    }
+  }
   return null
 }

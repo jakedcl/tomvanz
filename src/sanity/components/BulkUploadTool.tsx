@@ -1,12 +1,16 @@
 'use client'
 
 import {useCallback, useEffect, useRef, useState} from 'react'
-import {Badge, Box, Button, Card, Flex, Spinner, Stack, Text, TextInput} from '@sanity/ui'
+import {Badge, Box, Button, Card, Checkbox, Flex, Spinner, Stack, Text, TextInput} from '@sanity/ui'
 import {useClient} from 'sanity'
 import {useRouter} from 'sanity/router'
 import {
   ACTIVITIES,
+  countsTowardBulkUpload,
+  flightFromUpload,
   guessActivity,
+  isFlightLogFile,
+  isShortFlightDuration,
   isGpxFile,
   isPhotoFile,
   photoFromUpload,
@@ -14,10 +18,16 @@ import {
   readPhotoMeta,
   routeFromUpload,
   runPool,
-  titleFromFileName,
   type Activity,
   type PhotoMeta,
 } from '../../lib/bulk-upload'
+import {photoTitleFallback, routeTitleFallback, titleFromCoordinates} from '../../lib/auto-title'
+import {linkPhotosToFlightDocument} from '../../lib/link-flight-photos'
+import {linkPhotosToRouteDocument} from '../../lib/link-route-photos'
+import {postReverseGeocodePlace} from '../../lib/reverse-geocode-client'
+import {photoLinkWindow} from '../../lib/flight-photo-link'
+import {enrichParseFlightPlace, postParseFlight, type ParseFlightApiResponse} from '../../lib/parse-flight-api'
+import {effectiveTakenAt} from '../../lib/photo-taken-at'
 import {lineLengthMeters} from '../../lib/simplify-route'
 import {readGpx} from '../lib/parseGpx'
 
@@ -29,31 +39,65 @@ export type UploaderClient = {
   findByAsset: (assetId: string) => Promise<string | null>
   /** The id of a route already using this GPX file, if any. */
   findRouteByAsset: (assetId: string) => Promise<string | null>
+  findFlightByAsset: (assetId: string) => Promise<string | null>
   createPhoto: (doc: ReturnType<typeof photoFromUpload>) => Promise<{_id: string}>
   createRoute: (doc: ReturnType<typeof routeFromUpload>) => Promise<{_id: string}>
+  createFlight: (doc: ReturnType<typeof flightFromUpload>) => Promise<{_id: string}>
+  findFlightBySourceFilename: (name: string) => Promise<string | null>
+  linkPhotosToFlight: (
+    flightId: string,
+    startedAt: string,
+    durationSeconds: number,
+  ) => Promise<{unlinkedLabels: string[]}>
+  linkPhotoToFlights: (photoId: string, takenAt: string | undefined, fileName: string) => Promise<void>
+  parseFlightLog: (file: File) => Promise<ParseFlightApiResponse>
+  reverseGeocodePlace: (lat: number, lng: number) => Promise<string | undefined>
+  linkPhotosToRoute: (
+    routeId: string,
+    startedAt: string,
+    endedAt: string,
+    coordinates: [number, number][],
+  ) => Promise<{linkedCount: number}>
 }
 
-type Status = 'reading' | 'ready' | 'waiting' | 'uploading' | 'done' | 'no-location' | 'duplicate' | 'skipped' | 'error'
+type ParseFlightPayload = ParseFlightApiResponse
+
+type Status =
+  | 'reading'
+  | 'ready'
+  | 'waiting'
+  | 'uploading'
+  | 'done'
+  | 'no-location'
+  | 'no-gps'
+  | 'duplicate'
+  | 'skipped'
+  | 'error'
 
 type Row = {
   id: number
   name: string
-  kind: 'photo' | 'route'
+  kind: 'photo' | 'route' | 'flight'
   status: Status
   note?: string
   docId?: string
+  fileAssetId?: string
   /** Photos: a small picture of the file, so the right title goes on the right photo. */
   preview?: string
   /** Photos: what was read from the file (GPS, date taken). */
   meta?: PhotoMeta
   /** Routes: the line and start time read from the GPX. */
-  route?: {coordinates: [number, number][]; startedAt?: string}
+  route?: {coordinates: [number, number][]; startedAt?: string; endedAt?: string}
   /** Routes: bike, hike or other. Left empty when the file doesn't say, so it's chosen on purpose. */
   activity?: Activity
   title: string
+  flightParse?: ParseFlightPayload
+  /** False = visible on the list but omitted from Upload (short flights default off). */
+  includeInUpload?: boolean
 }
 
 const CONCURRENCY = 3
+const PARSE_CONCURRENCY = 1
 const METERS_PER_MILE = 1609.344
 
 const STATUS_LABEL: Record<Status, string> = {
@@ -63,6 +107,7 @@ const STATUS_LABEL: Record<Status, string> = {
   uploading: 'Uploading',
   done: 'On the map',
   'no-location': 'Needs a location',
+  'no-gps': 'No GPS track',
   duplicate: 'Already uploaded',
   skipped: 'Skipped',
   error: 'Failed',
@@ -75,6 +120,7 @@ const STATUS_TONE: Record<Status, 'default' | 'positive' | 'caution' | 'critical
   uploading: 'primary',
   done: 'positive',
   'no-location': 'caution',
+  'no-gps': 'caution',
   duplicate: 'default',
   skipped: 'default',
   error: 'critical',
@@ -85,13 +131,32 @@ const editable = (row: Row) => row.status === 'ready' || row.status === 'error'
 
 /** What a route still needs before it can be uploaded (photos need nothing). */
 function missingDetails(row: Row): string | undefined {
-  if (row.kind !== 'route' || !editable(row)) return undefined
-  if (!row.title.trim()) return 'Add a title.'
-  if (!row.activity) return 'Pick bike, hike or other.'
+  if (!editable(row)) return undefined
+  if (row.kind === 'route') {
+    if (!row.title.trim()) return 'Add a title.'
+    if (!row.activity) return 'Pick bike, hike or other.'
+  }
+  if (row.kind === 'flight' && !row.title.trim()) return 'Add a title.'
   return undefined
 }
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
+
+function flightSummary(parse: ParseFlightPayload) {
+  const miles = parse.distanceMeters / METERS_PER_MILE
+  const parts = [
+    parse.aircraft,
+    parse.place,
+    parse.durationSeconds ? `${Math.round(parse.durationSeconds / 60)} min` : null,
+    miles > 0 ? `${miles.toFixed(1)} mi` : null,
+  ].filter(Boolean)
+  if (parse.startedAt) {
+    parts.unshift(
+      new Date(parse.startedAt).toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'}),
+    )
+  }
+  return parts.join(' · ')
+}
 
 function routeSummary(route: NonNullable<Row['route']>) {
   const miles = lineLengthMeters(route.coordinates) / METERS_PER_MILE
@@ -101,6 +166,12 @@ function routeSummary(route: NonNullable<Row['route']>) {
   }
   return parts.join(' · ')
 }
+
+const FlightIcon = () => (
+  <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M4 14l4-2 9-7 2 2-7 9-2 4-3-1 2-3-3 1z" />
+  </svg>
+)
 
 const RouteIcon = () => (
   <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -127,8 +198,47 @@ export function BulkUploadTool() {
         `*[_type == "track" && file.asset._ref == $id][0]._id`,
         {id: assetId},
       ),
+    findFlightByAsset: (assetId) =>
+      client.fetch<string | null>(`*[_type == "flight" && log.asset._ref == $id][0]._id`, {id: assetId}),
+    findFlightBySourceFilename: (name) =>
+      client.fetch<string | null>(`*[_type == "flight" && sourceFilename == $name][0]._id`, {name}),
     createPhoto: (doc) => client.create(doc),
     createRoute: (doc) => client.create(doc),
+    createFlight: (doc) => client.create(doc),
+    linkPhotosToFlight: (flightId, startedAt, durationSeconds) =>
+      linkPhotosToFlightDocument(client, flightId, startedAt, durationSeconds),
+    parseFlightLog: async (file) => {
+      const token = client.config().token
+      if (!token) throw new Error('Sign in to Studio to parse flight logs.')
+      const parsed = await postParseFlight(file, token)
+      return enrichParseFlightPlace(parsed, (lat, lng) => postReverseGeocodePlace(lat, lng, token))
+    },
+    reverseGeocodePlace: async (lat, lng) => {
+      const token = client.config().token
+      if (!token) return undefined
+      return postReverseGeocodePlace(lat, lng, token)
+    },
+    linkPhotosToRoute: (routeId, startedAt, endedAt, coordinates) =>
+      linkPhotosToRouteDocument(client, routeId, startedAt, endedAt, coordinates),
+    linkPhotoToFlights: async (photoId, takenAt, fileName) => {
+      const when = effectiveTakenAt(takenAt, fileName)
+      if (!when) return
+      const flights = await client.fetch<{_id: string; startedAt: string; durationSeconds: number}[]>(
+        `*[_type == "flight" && defined(startedAt) && defined(durationSeconds)]{
+          _id, startedAt, durationSeconds
+        }`,
+      )
+      const taken = new Date(when).getTime()
+      for (const f of flights) {
+        const {start, end} = photoLinkWindow(f.startedAt, f.durationSeconds)
+        const startMs = new Date(start).getTime()
+        const endMs = new Date(end).getTime()
+        if (taken >= startMs && taken <= endMs) {
+          await client.patch(photoId).set({flight: {_type: 'reference', _ref: f._id}}).commit()
+          return
+        }
+      }
+    },
   }
   return (
     <BulkUploadView
@@ -150,7 +260,7 @@ export function BulkUploadView({
   openDocument,
 }: {
   uploader: UploaderClient
-  openDocument: (docId: string, type: 'photo' | 'track') => void
+  openDocument: (docId: string, type: 'photo' | 'track' | 'flight') => void
 }) {
   const [rows, setRows] = useState<Row[]>([])
   const [running, setRunning] = useState(false)
@@ -194,6 +304,47 @@ export function BulkUploadView({
       if (!file || !row) return
       patchRow(id, {status: 'uploading', note: undefined})
       try {
+        if (row.kind === 'flight') {
+          if (!row.flightParse || !row.title.trim()) {
+            throw new Error('This flight is missing details.')
+          }
+          const asset = await uploader.uploadFile(file)
+          const existing = await uploader.findFlightByAsset(asset._id)
+          if (existing) {
+            patchRow(id, {status: 'duplicate', docId: existing, note: 'Already on the map.'})
+            return
+          }
+          const doc = await uploader.createFlight(
+            flightFromUpload(asset._id, {
+              ...row.flightParse,
+              hasGps: !row.flightParse.noMap,
+              title: row.title,
+              sourceFilename: row.name,
+            }),
+          )
+          let linkNote = ''
+          if (row.flightParse.startedAt && row.flightParse.durationSeconds) {
+            const {unlinkedLabels} = await uploader.linkPhotosToFlight(
+              doc._id,
+              row.flightParse.startedAt,
+              row.flightParse.durationSeconds,
+            )
+            if (unlinkedLabels.length > 0) {
+              linkNote = ` Could not auto-link: ${unlinkedLabels.slice(0, 5).join(', ')}${unlinkedLabels.length > 5 ? '…' : ''}.`
+            }
+          }
+          if (row.flightParse.noMap) {
+            patchRow(id, {
+              status: 'no-gps',
+              docId: doc._id,
+              note: `Saved, but it has no GPS and will not show on the map.${linkNote}`,
+            })
+          } else {
+            patchRow(id, {status: 'done', docId: doc._id, note: linkNote || undefined})
+          }
+          return
+        }
+
         if (row.kind === 'route') {
           if (!row.route || !row.activity || !row.title.trim()) throw new Error('This route is missing details.')
           const asset = await uploader.uploadFile(file)
@@ -211,6 +362,14 @@ export function BulkUploadView({
               startedAt: row.route.startedAt,
             }),
           )
+          if (row.route.startedAt && row.route.endedAt) {
+            await uploader.linkPhotosToRoute(
+              doc._id,
+              row.route.startedAt,
+              row.route.endedAt,
+              row.route.coordinates,
+            )
+          }
           patchRow(id, {status: 'done', docId: doc._id})
           return
         }
@@ -226,6 +385,7 @@ export function BulkUploadView({
         }
 
         const doc = await uploader.createPhoto(photoFromUpload(asset._id, meta, row.title))
+        await uploader.linkPhotoToFlights(doc._id, meta.takenAt, file.name)
         if (meta.lat == null) {
           patchRow(id, {
             status: 'no-location',
@@ -257,12 +417,17 @@ export function BulkUploadView({
       const added: Row[] = []
       const photos: {id: number; file: File}[] = []
       const routes: {id: number; file: File}[] = []
+      const flights: {id: number; file: File}[] = []
       for (const file of Array.from(list)) {
         const id = nextId.current++
         if (isGpxFile(file)) {
           filesById.current.set(id, file)
           added.push({id, name: file.name, kind: 'route', status: 'reading', title: ''})
           routes.push({id, file})
+        } else if (isFlightLogFile(file)) {
+          filesById.current.set(id, file)
+          added.push({id, name: file.name, kind: 'flight', status: 'reading', title: ''})
+          flights.push({id, file})
         } else if (isPhotoFile(file)) {
           filesById.current.set(id, file)
           const preview = URL.createObjectURL(file)
@@ -270,35 +435,86 @@ export function BulkUploadView({
           added.push({id, name: file.name, kind: 'photo', status: 'reading', preview, title: ''})
           photos.push({id, file})
         } else {
-          added.push({id, name: file.name, kind: 'photo', status: 'skipped', note: 'Not a photo or a GPX route.', title: ''})
+          added.push({
+            id,
+            name: file.name,
+            kind: 'photo',
+            status: 'skipped',
+            note: 'Not a photo, GPX route, or DJI flight log.',
+            title: '',
+          })
         }
       }
       setRows((current) => [...current, ...added])
 
       // Reading the file happens here, before anything is uploaded, so anything missing shows up early.
       for (const {id, file} of photos) {
-        void readPhotoMeta(file).then((meta) => {
+        void readPhotoMeta(file).then(async (meta) => {
+          const fallback = photoTitleFallback(file.name)
+          let title = fallback
+          if (meta.lat != null && meta.lng != null) {
+            title = await titleFromCoordinates(meta.lat, meta.lng, uploader.reverseGeocodePlace, fallback)
+          }
           patchRow(id, {
             status: 'ready',
             meta,
+            title,
             note: meta.lat == null ? 'No GPS in this photo. You’ll need to drop a pin after uploading.' : undefined,
           })
         })
       }
+      void runPool(flights, PARSE_CONCURRENCY, async ({id, file}) => {
+        try {
+          const duplicate = await uploader.findFlightBySourceFilename(file.name)
+          if (duplicate) {
+            patchRow(id, {status: 'duplicate', docId: duplicate, note: 'A flight with this file name is already on the map.'})
+            forget([id])
+            return
+          }
+          const parsed = await uploader.parseFlightLog(file)
+          const short = isShortFlightDuration(parsed.durationSeconds)
+          patchRow(id, {
+            status: 'ready',
+            flightParse: parsed,
+            title: parsed.defaultTitle,
+            includeInUpload: short ? false : true,
+            note: [
+              flightSummary(parsed),
+              parsed.noMap ? 'No GPS in this log — it will not appear on the map.' : undefined,
+            ]
+              .filter(Boolean)
+              .join(' '),
+          })
+        } catch (error: unknown) {
+          forget([id])
+          patchRow(id, {
+            status: 'error',
+            note: error instanceof Error ? error.message : 'Could not read that flight log.',
+          })
+        }
+      })
       for (const {id, file} of routes) {
         void file
           .text()
-          .then((text) => {
+          .then(async (text) => {
             const gpx = readGpx(text)
             const route = {
               coordinates: gpx.coordinates,
               startedAt: plausibleTime(gpx.time ? new Date(gpx.time) : null),
+              endedAt: plausibleTime(gpx.endTime ? new Date(gpx.endTime) : null),
+            }
+            const fallback = routeTitleFallback(gpx.name, file.name)
+            let title = fallback
+            const start = gpx.coordinates[0]
+            if (start) {
+              const [lng, lat] = start
+              title = await titleFromCoordinates(lat, lng, uploader.reverseGeocodePlace, fallback)
             }
             patchRow(id, {
               status: 'ready',
               route,
               activity: guessActivity(gpx.type),
-              title: gpx.name ?? titleFromFileName(file.name),
+              title,
               note: routeSummary(route),
             })
           })
@@ -311,7 +527,7 @@ export function BulkUploadView({
           })
       }
     },
-    [patchRow, forget],
+    [patchRow, forget, uploader],
   )
 
   const counts = rows.reduce(
@@ -319,18 +535,26 @@ export function BulkUploadView({
     {} as Partial<Record<Status, number>>,
   )
   const ready = rows.filter((row) => row.status === 'ready')
-  const complete = ready.filter((row) => !missingDetails(row))
+  const complete = ready.filter((row) => !missingDetails(row) && countsTowardBulkUpload(row.includeInUpload))
+  const excludedShort = ready.filter(
+    (row) => row.kind === 'flight' && isShortFlightDuration(row.flightParse?.durationSeconds) && !countsTowardBulkUpload(row.includeInUpload),
+  ).length
   const incomplete = ready.length - complete.length
   const reading = rows.some((row) => row.status === 'reading')
   const failed = rows.filter((row) => row.status === 'error').map((row) => row.id)
-  const sent = rows.filter((row) => ['done', 'no-location', 'duplicate', 'error'].includes(row.status)).length
+  const sent = rows.filter((row) => ['done', 'no-location', 'no-gps', 'duplicate', 'error'].includes(row.status)).length
   const inFlight = rows.filter((row) => row.status === 'waiting' || row.status === 'uploading').length
   const photoCount = complete.filter((row) => row.kind === 'photo').length
   const routeCount = complete.filter((row) => row.kind === 'route').length
+  const flightCount = complete.filter((row) => row.kind === 'flight').length
   const uploadLabel =
     complete.length === 0
       ? 'Upload'
-      : `Upload ${[photoCount ? plural(photoCount, 'photo') : '', routeCount ? plural(routeCount, 'route') : '']
+      : `Upload ${[
+          photoCount ? plural(photoCount, 'photo') : '',
+          routeCount ? plural(routeCount, 'route') : '',
+          flightCount ? plural(flightCount, 'flight') : '',
+        ]
           .filter(Boolean)
           .join(' and ')}`
 
@@ -342,10 +566,9 @@ export function BulkUploadView({
             Bulk upload
           </Text>
           <Text size={1} muted>
-            Drop in photos and GPX routes. Give photos a title if you like; routes need a title and bike, hike or other.
-            Remove any you don’t want, then press Upload. Photos are placed from the GPS in the photo and dated from
-            when it was taken; routes are dated from when they started. Drone photos are spotted automatically from
-            their file names.
+            Drop in photos, GPX routes, and DJI flight logs (`FlightRecord_*.txt`). Give photos a title if you like;
+            routes need a title and bike, hike or other; flights need a title (pre-filled when possible). Remove any you
+            don’t want, then press Upload.
           </Text>
         </Stack>
 
@@ -369,7 +592,7 @@ export function BulkUploadView({
         >
           <Stack gap={3}>
             <Text size={2} weight="medium">
-              Drop photos and GPX routes here
+              Drop photos, routes, and flight logs here
             </Text>
             <Text size={1} muted>
               or click to choose them
@@ -378,7 +601,7 @@ export function BulkUploadView({
           <input
             ref={picker}
             type="file"
-            accept="image/*,.gpx,application/gpx+xml"
+            accept="image/*,.gpx,application/gpx+xml,.txt,text/plain"
             multiple
             hidden
             onChange={(event) => {
@@ -395,6 +618,7 @@ export function BulkUploadView({
                 {running || reading ? <Spinner muted /> : null}
                 <Text size={1} muted>
                   {running ? `${sent} of ${sent + inFlight} uploaded` : `${complete.length} ready to upload`}
+                  {!running && excludedShort ? ` · ${excludedShort} short flight${excludedShort === 1 ? '' : 's'} excluded` : ''}
                   {!running && incomplete ? ` · ${incomplete} need details` : ''}
                   {counts['no-location'] ? ` · ${counts['no-location']} need a location` : ''}
                   {counts.duplicate ? ` · ${counts.duplicate} already uploaded` : ''}
@@ -434,7 +658,16 @@ export function BulkUploadView({
                   return (
                     <Card key={row.id} padding={3} borderTop={index > 0} tone="default">
                       <Flex align="center" gap={3}>
-                        {row.kind === 'route' ? (
+                        {row.kind === 'flight' ? (
+                          <Flex
+                            align="center"
+                            justify="center"
+                            aria-hidden
+                            style={{width: 56, height: 56, borderRadius: 3, flexShrink: 0, background: 'rgba(217,119,6,0.15)'}}
+                          >
+                            <FlightIcon />
+                          </Flex>
+                        ) : row.kind === 'route' ? (
                           <Flex
                             align="center"
                             justify="center"
@@ -459,7 +692,7 @@ export function BulkUploadView({
                             <TextInput
                               fontSize={1}
                               padding={2}
-                              placeholder={row.kind === 'route' ? 'Title' : 'Title (optional)'}
+                              placeholder={row.kind === 'photo' ? 'Title (optional)' : 'Title'}
                               aria-label={`Title for ${row.name}`}
                               value={row.title}
                               onChange={(event) => patchRow(row.id, {title: event.currentTarget.value})}
@@ -468,6 +701,19 @@ export function BulkUploadView({
                             <Text size={1} weight="medium" textOverflow="ellipsis">
                               {row.title}
                             </Text>
+                          ) : null}
+                          {row.kind === 'flight' &&
+                          isShortFlightDuration(row.flightParse?.durationSeconds) &&
+                          editable(row) ? (
+                            <Flex align="center" gap={2}>
+                              <Checkbox
+                                checked={countsTowardBulkUpload(row.includeInUpload)}
+                                onChange={() =>
+                                  patchRow(row.id, {includeInUpload: !countsTowardBulkUpload(row.includeInUpload)})
+                                }
+                              />
+                              <Text size={1}>Include in upload</Text>
+                            </Flex>
                           ) : null}
                           {row.kind === 'route' && row.route && editable(row) ? (
                             <Flex gap={1} role="group" aria-label={`Activity for ${row.name}`}>
@@ -505,14 +751,27 @@ export function BulkUploadView({
                               }}
                             />
                           ) : null}
-                          {row.docId && (row.status === 'no-location' || row.status === 'duplicate') ? (
+                          {row.docId &&
+                          (row.status === 'no-location' || row.status === 'no-gps' || row.status === 'duplicate') ? (
                             <Button
                               text="Open"
                               mode="ghost"
                               fontSize={1}
                               padding={2}
-                              onClick={() => openDocument(row.docId!, row.kind === 'route' ? 'track' : 'photo')}
+                              onClick={() =>
+                                openDocument(
+                                  row.docId!,
+                                  row.kind === 'route' ? 'track' : row.kind === 'flight' ? 'flight' : 'photo',
+                                )
+                              }
                             />
+                          ) : null}
+                          {row.kind === 'flight' &&
+                          isShortFlightDuration(row.flightParse?.durationSeconds) &&
+                          row.status === 'ready' ? (
+                            <Badge tone="caution" fontSize={0}>
+                              Short flight (under 1 min)
+                            </Badge>
                           ) : null}
                           <Badge tone={badge === 'needs-details' ? 'caution' : STATUS_TONE[badge]} fontSize={0}>
                             {badge === 'needs-details' ? 'Needs details' : STATUS_LABEL[badge]}

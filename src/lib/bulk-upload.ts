@@ -1,5 +1,6 @@
 import exifr from 'exifr'
 
+import {isFlightLogFileName, type ParsedFlightLog} from './flight-log'
 import {prepareRouteDisplayFields, type LngLat} from './simplify-route'
 
 /** What the bulk uploader pulls out of a photo file. */
@@ -93,6 +94,27 @@ export function isGpxFile(file: {name: string}): boolean {
   return /\.gpx$/i.test(file.name)
 }
 
+/** DJI flight logs by file name (`FlightRecord_*.txt` / `DJIFlightRecord_*.txt`). */
+export function isFlightLogFile(file: {name: string}): boolean {
+  return isFlightLogFileName(file.name)
+}
+
+/** Flights shorter than this are excluded from bulk upload by default (Tom can opt back in). */
+export const SHORT_FLIGHT_UPLOAD_MIN_SECONDS = 60
+
+export function isShortFlightDuration(durationSeconds: number | undefined | null): boolean {
+  return (
+    typeof durationSeconds === 'number' &&
+    Number.isFinite(durationSeconds) &&
+    durationSeconds < SHORT_FLIGHT_UPLOAD_MIN_SECONDS
+  )
+}
+
+/** Undefined means included (photos/routes and normal flights). */
+export function countsTowardBulkUpload(includeInUpload: boolean | undefined): boolean {
+  return includeInUpload !== false
+}
+
 /** A readable title from a file name: "Afternoon_Ride.gpx" becomes "Afternoon Ride". */
 export function titleFromFileName(name: string): string {
   return name
@@ -128,5 +150,30 @@ export function routeFromUpload(
     displayCoordinates,
     distanceMeters,
     ...(route.startedAt ? {startedAt: route.startedAt} : {}),
+  }
+}
+
+/** The Flight document created for an uploaded DJI log. */
+export function flightFromUpload(
+  fileAssetId: string,
+  parsed: ParsedFlightLog & {title: string; sourceFilename?: string},
+) {
+  return {
+    _type: 'flight' as const,
+    title: parsed.title.trim(),
+    log: {_type: 'file' as const, asset: {_type: 'reference' as const, _ref: fileAssetId}},
+    displayCoordinates: parsed.displayCoordinates,
+    series: parsed.series,
+    distanceMeters: parsed.distanceMeters,
+    durationSeconds: parsed.durationSeconds,
+    maxHeightMeters: parsed.maxHeightMeters,
+    aircraft: parsed.aircraft,
+    ...(parsed.startedAt ? {startedAt: parsed.startedAt} : {}),
+    ...(parsed.place ? {place: parsed.place} : {}),
+    ...(parsed.home
+      ? {home: {_type: 'geopoint' as const, lat: parsed.home.lat, lng: parsed.home.lng}}
+      : {}),
+    videoSegments: parsed.videoSegments,
+    ...(parsed.sourceFilename ? {sourceFilename: parsed.sourceFilename} : {}),
   }
 }

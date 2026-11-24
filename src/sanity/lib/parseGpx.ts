@@ -12,6 +12,8 @@ export type GpxRoute = {
   type?: string
   /** When the track started, as written in the file. */
   time?: string
+  /** Last track point time, when the GPX records per-point timestamps. */
+  endTime?: string
 }
 
 /** The text of the direct child `<tag>` of `parent`, if there is one. */
@@ -50,12 +52,18 @@ export function readGpx(gpxText: string): GpxRoute {
 
   const track = doc.getElementsByTagName('trk')[0]
   const metadata = doc.getElementsByTagName('metadata')[0]
+  let endTime: string | undefined
+  for (const point of points) {
+    const when = childText(point, 'time')
+    if (when) endTime = when
+  }
   return {
     coordinates,
     name: childText(track, 'name') ?? childText(metadata, 'name'),
     type: childText(track, 'type'),
     // The first point's time is when the activity began; the file's own time can be when it was exported.
     time: childText(points[0], 'time') ?? childText(metadata, 'time'),
+    endTime,
   }
 }
 

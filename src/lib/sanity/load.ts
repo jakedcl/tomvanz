@@ -17,7 +17,7 @@ const REVALIDATE_SECONDS = 60
 const ATTEMPT_TIMEOUT_MS = 5000
 const ATTEMPTS = 2
 
-const emptyMap: MapData = {name: 'Tom Vanz', tracks: [], pins: []}
+const emptyMap: MapData = {name: 'Tom Vanz', tracks: [], flights: [], pins: []}
 
 const isBuilding = () => process.env.NEXT_PHASE === 'phase-production-build'
 
