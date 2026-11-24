@@ -1,4 +1,5 @@
 import {patchTitleIfEmpty} from './auto-title'
+import {defaultIncludeOnMap} from './bulk-upload'
 import {formatDefaultTitle} from './flight-log'
 import type {VideoSegment} from './flight-log'
 
@@ -24,9 +25,11 @@ export function flightStudioPatchFromParse(
   parsed: ParseFlightApiResponse,
   sourceFilename: string,
   existingTitle?: string,
+  includeOnMap?: boolean,
 ): Record<string, unknown> {
   return {
     ...patchTitleIfEmpty(existingTitle, parsed.defaultTitle),
+    includeOnMap: defaultIncludeOnMap(parsed.durationSeconds, includeOnMap),
     ...(parsed.startedAt ? {startedAt: parsed.startedAt} : {}),
     ...(parsed.place ? {place: parsed.place} : {}),
     durationSeconds: parsed.durationSeconds,

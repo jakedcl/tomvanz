@@ -115,6 +115,15 @@ export function countsTowardBulkUpload(includeInUpload: boolean | undefined): bo
   return includeInUpload !== false
 }
 
+/** Short flights default off the map until opted in; length alone decides (not video/photo segments). */
+export function defaultIncludeOnMap(
+  durationSeconds: number | undefined | null,
+  optedIn?: boolean,
+): boolean {
+  if (!isShortFlightDuration(durationSeconds)) return true
+  return optedIn === true
+}
+
 /** A readable title from a file name: "Afternoon_Ride.gpx" becomes "Afternoon Ride". */
 export function titleFromFileName(name: string): string {
   return name
@@ -157,10 +166,12 @@ export function routeFromUpload(
 export function flightFromUpload(
   fileAssetId: string,
   parsed: ParsedFlightLog & {title: string; sourceFilename?: string},
+  includeOnMap = true,
 ) {
   return {
     _type: 'flight' as const,
     title: parsed.title.trim(),
+    includeOnMap,
     log: {_type: 'file' as const, asset: {_type: 'reference' as const, _ref: fileAssetId}},
     displayCoordinates: parsed.displayCoordinates,
     series: parsed.series,

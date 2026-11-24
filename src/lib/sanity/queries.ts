@@ -14,7 +14,7 @@ export const mapQuery = defineQuery(`{
     },
     photo
   },
-  "flights": *[_type == "flight" && defined(displayCoordinates) && displayCoordinates != "[]"] | order(startedAt desc) {
+  "flights": *[_type == "flight" && defined(displayCoordinates) && displayCoordinates != "[]" && coalesce(includeOnMap, true)] | order(startedAt desc) {
     _id,
     title,
     startedAt,

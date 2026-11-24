@@ -1,7 +1,7 @@
 'use client'
 
 import {useRef, useState} from 'react'
-import {Button, Card, Flex, Spinner, Stack, Text} from '@sanity/ui'
+import {Button, Card, Checkbox, Flex, Spinner, Stack, Text} from '@sanity/ui'
 import {PatchEvent, set, unset, useClient, useFormValue, type ObjectInputProps} from 'sanity'
 import {isShortFlightDuration} from '@/lib/bulk-upload'
 import {linkPhotosToFlightDocument} from '@/lib/link-flight-photos'
@@ -23,6 +23,7 @@ export function FlightLogInput(props: ObjectInputProps) {
   const documentId = useFormValue(['_id']) as string | undefined
   const currentTitle = useFormValue(['title']) as string | undefined
   const durationSeconds = useFormValue(['durationSeconds']) as number | undefined
+  const includeOnMap = useFormValue(['includeOnMap']) as boolean | undefined
   const displayCoordinates = useFormValue(['displayCoordinates']) as string | undefined
   const [message, setMessage] = useState<'idle' | 'ok' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -55,7 +56,7 @@ export function FlightLogInput(props: ObjectInputProps) {
       )
       if (documentId) {
         const id = draftId(documentId)
-        const fields = flightStudioPatchFromParse(parsed, file.name, currentTitle)
+        const fields = flightStudioPatchFromParse(parsed, file.name, currentTitle, false)
         await client.patch(id).set(fields).commit()
 
         if (parsed.startedAt) {
@@ -150,7 +151,21 @@ export function FlightLogInput(props: ObjectInputProps) {
       </Flex>
       {shortFlight ? (
         <Card padding={3} radius={2} tone="caution">
-          <Text size={1}>Short flight (under 1 min)</Text>
+          <Stack space={3}>
+            <Text size={1}>Short flight (under 1 min)</Text>
+            <Flex align="center" gap={2}>
+              <Checkbox
+                checked={includeOnMap === true}
+                onChange={async () => {
+                  if (!documentId) return
+                  const id = draftId(documentId)
+                  const next = includeOnMap !== true
+                  await client.patch(id).set({includeOnMap: next}).commit()
+                }}
+              />
+              <Text size={1}>Show on map</Text>
+            </Flex>
+          </Stack>
         </Card>
       ) : null}
       {message === 'ok' ? (

@@ -111,6 +111,13 @@ export const flight = defineType({
       type: 'string',
       readOnly: true,
     }),
+    defineField({
+      name: 'includeOnMap',
+      title: 'Show on map',
+      type: 'boolean',
+      description: 'Short flights (under 1 min) stay off the map until you turn this on.',
+      initialValue: true,
+    }),
   ],
   preview: {
     select: {title: 'title', aircraft: 'aircraft', startedAt: 'startedAt', place: 'place'},
