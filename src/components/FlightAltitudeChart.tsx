@@ -3,10 +3,13 @@
 import {useCallback, useEffect, useRef, useState} from 'react'
 
 import type {FlightSeriesSample} from '@/lib/flight-log'
+import {formatDurationSeconds} from '@/lib/format-duration'
 import {formatFeet} from '@/lib/elevation'
 
 type Props = {
   flightId: string
+  /** Document duration — chart footer matches the card chip. */
+  durationSeconds?: number
   onScrub: (sample: FlightSeriesSample | null) => void
 }
 
@@ -17,7 +20,7 @@ function metersToFeet(m: number) {
   return m * 3.28084
 }
 
-export function FlightAltitudeChart({flightId, onScrub}: Props) {
+export function FlightAltitudeChart({flightId, durationSeconds, onScrub}: Props) {
   const [samples, setSamples] = useState<FlightSeriesSample[] | null>(null)
   const [done, setDone] = useState(false)
   const [active, setActive] = useState<FlightSeriesSample | null>(null)
@@ -73,27 +76,25 @@ export function FlightAltitudeChart({flightId, onScrub}: Props) {
   const tMin = Math.min(...times)
   const tSpan = Math.max(1, Math.max(...times) - tMin)
   const heights = samples.map((s) => s.height)
-  const minH = Math.min(...heights)
-  const maxH = Math.max(...heights)
-  const span = Math.max(1, maxH - minH)
+  const chartMinH = 0
+  const chartMaxH = Math.max(chartMinH, ...heights)
+  const span = Math.max(1, chartMaxH - chartMinH)
 
   const points = samples.map((s) => {
     const x = ((s.t - tMin) / tSpan) * W
-    const y = H - 4 - ((s.height - minH) / span) * (H - 12)
+    const y = H - 4 - ((Math.max(chartMinH, s.height) - chartMinH) / span) * (H - 12)
     return `${x.toFixed(1)},${y.toFixed(1)}`
   })
   const line = points.join(' ')
 
-  const formatDuration = (sec: number) => {
-    const m = Math.floor(sec / 60)
-    const s = Math.round(sec % 60)
-    return m > 0 ? `${m}m ${s}s` : `${s}s`
-  }
+  const formatElapsed = (sec: number) => formatDurationSeconds(sec) ?? `${Math.round(sec)}s`
+  const footerDuration =
+    formatDurationSeconds(durationSeconds ?? tSpan) ?? formatElapsed(tSpan)
 
   return (
     <div className="mt-3">
       {active ? (
-        <MotionReadout sample={active} elapsedSeconds={active.t - tMin} formatDuration={formatDuration} />
+        <MotionReadout sample={active} elapsedSeconds={active.t - tMin} formatDuration={formatElapsed} />
       ) : (
         <p className="pb-2 text-[11px] text-black/45">Hover or drag across the chart to scrub the flight path.</p>
       )}
@@ -133,7 +134,7 @@ export function FlightAltitudeChart({flightId, onScrub}: Props) {
         ) : null}
       </svg>
       <p className="mt-1 text-[11px] text-black/40">
-        {formatFeet(metersToFeet(minH))} – {formatFeet(metersToFeet(maxH))} · {formatDuration(tSpan)}
+        {formatFeet(metersToFeet(chartMinH))} – {formatFeet(metersToFeet(chartMaxH))} · {footerDuration}
       </p>
     </div>
   )

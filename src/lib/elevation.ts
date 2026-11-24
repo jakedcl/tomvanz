@@ -156,5 +156,5 @@ export async function routeElevation(coords: [number, number][]): Promise<Elevat
 }
 
 export function formatFeet(feet: number): string {
-  return `${Math.round(feet).toLocaleString()} ft`
+  return `${Math.round(feet).toLocaleString('en-US')} ft`
 }

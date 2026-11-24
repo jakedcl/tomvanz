@@ -25,9 +25,49 @@ const LANDMARK_ADDRESS_TYPES = new Set([
   'lake',
 ])
 
+/** Most specific first; names with County / NYC borough admin labels are skipped when a finer field exists. */
+export const LOCALITY_KEYS = [
+  'neighbourhood',
+  'quarter',
+  'hamlet',
+  'suburb',
+  'village',
+  'town',
+  'city_district',
+  'city',
+  'municipality',
+] as const
+
+const NYC_BOROUGH_LABELS = new Set([
+  'Bronx',
+  'The Bronx',
+  'Brooklyn',
+  'Manhattan',
+  'Queens',
+  'Staten Island',
+  'Richmond County',
+  'Kings County',
+  'New York County',
+  'Bronx County',
+  'Queens County',
+])
+
+/** County-level or borough admin names — not used as auto-titles when a finer locality exists. */
+export function isSkippableLocality(value: string, key?: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed) return true
+  if (/county/i.test(trimmed)) return true
+  if (key === 'city_district' && NYC_BOROUGH_LABELS.has(trimmed)) return true
+  if (NYC_BOROUGH_LABELS.has(trimmed) && key === 'suburb') return true
+  return false
+}
+
+/** Bump when label selection rules change so cached strings refresh. */
+const GEOCODE_CACHE_VERSION = 'v2'
+
 /** ~110 m grid — good enough for takeoff labels without hammering Nominatim. */
 export function geocodeCacheKey(lat: number, lng: number): string {
-  return `${lat.toFixed(3)},${lng.toFixed(3)}`
+  return `${GEOCODE_CACHE_VERSION}:${lat.toFixed(3)},${lng.toFixed(3)}`
 }
 
 function schedule<T>(work: () => Promise<T>): Promise<T> {
@@ -49,42 +89,50 @@ type NominatimReverse = {
   address?: Record<string, string>
 }
 
-/** Prefer neighbourhoods and towns over peaks and named landmarks. */
+/** Single-name place title (no state, no county) for auto-titles and `place` fields. */
+export function placeTitleFromAddress(addr: Record<string, string>): string | undefined {
+  for (const key of LOCALITY_KEYS) {
+    const value = addr[key]?.trim()
+    if (!value || isSkippableLocality(value, key)) continue
+    return normalizePlaceTitle(value)
+  }
+  return undefined
+}
+
+/** Pick the most specific neighbourhood/town name from a Nominatim reverse payload. */
 export function pickLocalityLabel(data: NominatimReverse): string | undefined {
   const addr = data.address
-  if (!addr) return shortenPlace(data.display_name)
-
-  // Urban pockets first, then town-scale, hamlet last (DJI takeoffs often sit in named hamlets / peaks).
-  const localityKeys = [
-    'neighbourhood',
-    'suburb',
-    'quarter',
-    'city_district',
-    'village',
-    'town',
-    'city',
-    'hamlet',
-    'municipality',
-  ] as const
-
-  for (const key of localityKeys) {
-    const value = addr[key]
-    if (value?.trim()) {
-      const region = addr.state || addr.region
-      const label = region && region !== value ? `${value}, ${region}` : value
-      return shortenPlace(label)
-    }
+  if (addr) {
+    const fromAddr = placeTitleFromAddress(addr)
+    if (fromAddr) return fromAddr
   }
 
   const addressType = (data.addresstype ?? data.type ?? '').toLowerCase()
   if (!LANDMARK_ADDRESS_TYPES.has(addressType) && data.name?.trim()) {
-    return shortenPlace(data.name)
+    const name = data.name.trim()
+    if (!isSkippableLocality(name)) return normalizePlaceTitle(name)
   }
 
-  const county = addr.county
-  const region = addr.state || addr.region
-  if (county) return shortenPlace(region && county !== region ? `${county}, ${region}` : county)
-  return shortenPlace(data.display_name)
+  return fallbackFromDisplayName(data.display_name)
+}
+
+function fallbackFromDisplayName(raw?: string): string | undefined {
+  if (!raw?.trim()) return undefined
+  const first = raw.split(',')[0]?.trim()
+  if (!first || isSkippableLocality(first)) return undefined
+  return normalizePlaceTitle(first)
+}
+
+/** Trim street clutter; never append region/state. */
+export function normalizePlaceTitle(raw?: string): string | undefined {
+  if (!raw?.trim()) return undefined
+  let s = raw.trim()
+  s = s.replace(/^\d+[\s,]+/, '')
+  s = s
+    .replace(/\d{1,6}\s+[\w\s]+(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Lane|Ln|Way|Court|Ct)\b/gi, '')
+    .trim()
+  const first = s.split(',')[0]?.trim()
+  return first ? first.slice(0, 80) : undefined
 }
 
 export async function reverseGeocodePlace(lat: number, lng: number): Promise<string | undefined> {
@@ -113,18 +161,4 @@ export async function reverseGeocodePlace(lat: number, lng: number): Promise<str
 
   cache.set(key, result)
   return result
-}
-
-function shortenPlace(raw?: string): string | undefined {
-  if (!raw?.trim()) return undefined
-  let s = raw.trim()
-  s = s.replace(/^\d+[\s,]+/, '')
-  s = s
-    .replace(/\d{1,6}\s+[\w\s]+(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Lane|Ln|Way|Court|Ct)\b/gi, '')
-    .trim()
-  if (s.includes(',')) {
-    const parts = s.split(',').map((p) => p.trim()).filter(Boolean)
-    if (parts.length >= 2) return `${parts[0]}, ${parts[parts.length - 1]}`
-  }
-  return s.slice(0, 80)
 }

@@ -14,6 +14,7 @@ import {
   type ResultItem,
   type TypeOption,
 } from '@/lib/map-filters'
+import {formatMapDate} from '@/lib/format-map-date'
 
 type Props = {
   state: MapFilterState
@@ -23,13 +24,6 @@ type Props = {
   results: ResultItem[]
   total: number
   onPick: (item: ResultItem) => void
-}
-
-function formatDate(value?: string) {
-  if (!value) return null
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return null
-  return date.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'})
 }
 
 export function MapSearch({state, onChange, typeOptions, hasDrone, results, total, onPick}: Props) {
@@ -127,7 +121,7 @@ export function MapSearch({state, onChange, typeOptions, hasDrone, results, tota
               <li className="px-4 py-8 text-center text-[14px] text-black/50">Nothing matches that.</li>
             ) : (
               results.map((item) => {
-                const date = formatDate(item.date)
+                const date = formatMapDate(item.date)
                 const meta = [item.label, date, item.miles ? formatMiles(item.miles) : null].filter(Boolean).join(' · ')
                 return (
                   <li key={`${item.kind}-${item.id}`}>

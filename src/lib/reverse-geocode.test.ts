@@ -1,31 +1,63 @@
 import {describe, expect, it} from 'vitest'
 
-import {pickLocalityLabel} from './reverse-geocode'
+import {isSkippableLocality, pickLocalityLabel, placeTitleFromAddress} from './reverse-geocode'
 
 describe('pickLocalityLabel', () => {
-  it('prefers suburb over peak landmark name', () => {
+  it('uses neighbourhood without state (Emerson Hill)', () => {
+    const label = pickLocalityLabel({
+      name: 'Something else',
+      address: {neighbourhood: 'Emerson Hill', city: 'New York', state: 'New York'},
+    })
+    expect(label).toBe('Emerson Hill')
+  })
+
+  it('May 18 Staten Island: prefers hamlet over Richmond County suburb', () => {
+    const label = pickLocalityLabel({
+      addresstype: 'hamlet',
+      address: {
+        hamlet: 'Todt Hill',
+        suburb: 'Richmond County',
+        city: 'New York',
+        state: 'New York',
+      },
+    })
+    expect(label).toBe('Todt Hill')
+  })
+
+  it('uses town name without state (Saugerties)', () => {
+    const label = pickLocalityLabel({
+      address: {town: 'Saugerties', county: 'Ulster County', state: 'New York'},
+    })
+    expect(label).toBe('Saugerties')
+  })
+
+  it('skips suburb when it is a county name', () => {
+    const label = pickLocalityLabel({
+      address: {suburb: 'Richmond County', city: 'Staten Island', state: 'New York'},
+    })
+    expect(label).toBe('Staten Island')
+  })
+
+  it('uses suburb when it is a real neighborhood name', () => {
     const label = pickLocalityLabel({
       name: 'Blue Mountain',
       addresstype: 'peak',
       address: {suburb: 'Palenville', state: 'New York'},
     })
-    expect(label).toBe('Palenville, New York')
+    expect(label).toBe('Palenville')
   })
+})
 
-  it('prefers town over hamlet (e.g. Saugerties vs Blue Mountain)', () => {
-    const label = pickLocalityLabel({
-      name: 'Blue Mountain',
-      addresstype: 'peak',
-      address: {hamlet: 'Blue Mountain', town: 'Saugerties', state: 'New York'},
-    })
-    expect(label).toBe('Saugerties, New York')
+describe('isSkippableLocality', () => {
+  it('flags county and Richmond County suburb', () => {
+    expect(isSkippableLocality('Ulster County')).toBe(true)
+    expect(isSkippableLocality('Richmond County', 'suburb')).toBe(true)
+    expect(isSkippableLocality('Todt Hill', 'hamlet')).toBe(false)
   })
+})
 
-  it('uses neighbourhood when present', () => {
-    const label = pickLocalityLabel({
-      name: 'Something else',
-      address: {neighbourhood: 'Emerson Hill', city: 'New York', state: 'New York'},
-    })
-    expect(label).toBe('Emerson Hill, New York')
+describe('placeTitleFromAddress', () => {
+  it('walks keys in priority order', () => {
+    expect(placeTitleFromAddress({hamlet: 'Todt Hill', suburb: 'Richmond County'})).toBe('Todt Hill')
   })
 })

@@ -14,6 +14,8 @@ import {trackMiles} from '@/lib/track-mileage'
 import type {SanityImageSource} from '@sanity/image-url'
 import {infoCardCoverImage, infoCardLightboxImage, sanityImageAlt, urlFor} from '@/lib/sanity/image'
 import {lineCoordinates, type MapData, type SelectedItem} from '@/lib/sanity/types'
+import {formatDurationSeconds} from '@/lib/format-duration'
+import {formatMapDate} from '@/lib/format-map-date'
 import {trackColor} from '@/lib/track-color'
 
 type Props = {
@@ -39,37 +41,22 @@ type CardModel = {
   dashed: boolean
 }
 
-function formatDate(value?: string) {
-  if (!value) return null
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return null
-  return date.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'})
-}
-
 function activityLabel(activity: string) {
   if (activity === 'bike') return 'Bike'
   if (activity === 'hike') return 'Hike'
   return 'Track'
 }
 
-function formatDuration(seconds?: number) {
-  if (seconds == null || !Number.isFinite(seconds)) return null
-  const m = Math.floor(seconds / 60)
-  const s = Math.round(seconds % 60)
-  if (m <= 0) return `${s}s`
-  return s > 0 ? `${m}m ${s}s` : `${m}m`
-}
-
 function cardModel(data: MapData, selected: SelectedItem): CardModel | null {
   if (selected.kind === 'flight') {
     const flight = data.flights.find((item) => item._id === selected.id)
     if (!flight) return null
-    const when = formatDate(flight.startedAt)
+    const when = formatMapDate(flight.startedAt) ?? undefined
     const miles =
       flight.distanceMeters != null && flight.distanceMeters > 0
         ? formatMiles(flight.distanceMeters / 1609.344)
         : null
-    const duration = formatDuration(flight.durationSeconds)
+    const duration = formatDurationSeconds(flight.durationSeconds) ?? undefined
     const maxHt =
       flight.maxHeightMeters != null ? formatFeet(flight.maxHeightMeters * 3.28084) : null
     const stats = [when, flight.place, duration, miles, maxHt ? `${maxHt} max` : null, flight.aircraft]
@@ -90,7 +77,7 @@ function cardModel(data: MapData, selected: SelectedItem): CardModel | null {
   if (selected.kind === 'track') {
     const track = data.tracks.find((item) => item._id === selected.id)
     if (!track) return null
-    const when = formatDate(track.startedAt)
+    const when = formatMapDate(track.startedAt) ?? undefined
     const miles = trackMiles(track)
     const stats = [when, miles ? formatMiles(miles) : null].filter((item): item is string =>
       Boolean(item),
@@ -110,7 +97,7 @@ function cardModel(data: MapData, selected: SelectedItem): CardModel | null {
 
   const pin = data.pins.find((item) => item._id === selected.id)
   if (!pin) return null
-  const when = formatDate(pin.at)
+  const when = formatMapDate(pin.at) ?? undefined
   return {
     title: pin.title,
     eyebrow: pin.isDrone ? 'Drone' : 'Photo',
@@ -373,7 +360,12 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: 
           ) : null}
           {hasRoute && routeCoords ? <ElevationChart coords={routeCoords} color={card.accent} /> : null}
           {isFlight && flight && onFlightScrub ? (
-            <FlightAltitudeChart key={flight._id} flightId={flight._id} onScrub={onFlightScrub} />
+            <FlightAltitudeChart
+              key={flight._id}
+              flightId={flight._id}
+              durationSeconds={flight.durationSeconds}
+              onScrub={onFlightScrub}
+            />
           ) : null}
         </div>
       ) : null}
