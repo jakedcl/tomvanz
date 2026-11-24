@@ -1,14 +1,16 @@
 'use client'
 
 import {useCallback, useEffect, useRef, useState} from 'react'
-import {Badge, Box, Button, Card, Flex, Spinner, Stack, Text, TextInput} from '@sanity/ui'
+import {Badge, Box, Button, Card, Checkbox, Flex, Spinner, Stack, Text, TextInput} from '@sanity/ui'
 import {useClient} from 'sanity'
 import {useRouter} from 'sanity/router'
 import {
   ACTIVITIES,
+  countsTowardBulkUpload,
   flightFromUpload,
   guessActivity,
   isFlightLogFile,
+  isShortFlightDuration,
   isGpxFile,
   isPhotoFile,
   photoFromUpload,
@@ -92,6 +94,8 @@ type Row = {
   activity?: Activity
   title: string
   flightParse?: ParseFlightPayload
+  /** False = visible on the list but omitted from Upload (short flights default off). */
+  includeInUpload?: boolean
 }
 
 const CONCURRENCY = 3
@@ -469,10 +473,12 @@ export function BulkUploadView({
             return
           }
           const parsed = await uploader.parseFlightLog(file)
+          const short = isShortFlightDuration(parsed.durationSeconds)
           patchRow(id, {
             status: 'ready',
             flightParse: parsed,
             title: parsed.defaultTitle,
+            includeInUpload: short ? false : true,
             note: [
               flightSummary(parsed),
               parsed.noMap ? 'No GPS in this log — it will not appear on the map.' : undefined,
@@ -522,7 +528,10 @@ export function BulkUploadView({
     {} as Partial<Record<Status, number>>,
   )
   const ready = rows.filter((row) => row.status === 'ready')
-  const complete = ready.filter((row) => !missingDetails(row))
+  const complete = ready.filter((row) => !missingDetails(row) && countsTowardBulkUpload(row.includeInUpload))
+  const excludedShort = ready.filter(
+    (row) => row.kind === 'flight' && isShortFlightDuration(row.flightParse?.durationSeconds) && !countsTowardBulkUpload(row.includeInUpload),
+  ).length
   const incomplete = ready.length - complete.length
   const reading = rows.some((row) => row.status === 'reading')
   const failed = rows.filter((row) => row.status === 'error').map((row) => row.id)
@@ -602,6 +611,7 @@ export function BulkUploadView({
                 {running || reading ? <Spinner muted /> : null}
                 <Text size={1} muted>
                   {running ? `${sent} of ${sent + inFlight} uploaded` : `${complete.length} ready to upload`}
+                  {!running && excludedShort ? ` · ${excludedShort} short flight${excludedShort === 1 ? '' : 's'} excluded` : ''}
                   {!running && incomplete ? ` · ${incomplete} need details` : ''}
                   {counts['no-location'] ? ` · ${counts['no-location']} need a location` : ''}
                   {counts.duplicate ? ` · ${counts.duplicate} already uploaded` : ''}
@@ -685,6 +695,19 @@ export function BulkUploadView({
                               {row.title}
                             </Text>
                           ) : null}
+                          {row.kind === 'flight' &&
+                          isShortFlightDuration(row.flightParse?.durationSeconds) &&
+                          editable(row) ? (
+                            <Flex align="center" gap={2}>
+                              <Checkbox
+                                checked={countsTowardBulkUpload(row.includeInUpload)}
+                                onChange={() =>
+                                  patchRow(row.id, {includeInUpload: !countsTowardBulkUpload(row.includeInUpload)})
+                                }
+                              />
+                              <Text size={1}>Include in upload</Text>
+                            </Flex>
+                          ) : null}
                           {row.kind === 'route' && row.route && editable(row) ? (
                             <Flex gap={1} role="group" aria-label={`Activity for ${row.name}`}>
                               {ACTIVITIES.map((activity) => (
@@ -735,6 +758,13 @@ export function BulkUploadView({
                                 )
                               }
                             />
+                          ) : null}
+                          {row.kind === 'flight' &&
+                          isShortFlightDuration(row.flightParse?.durationSeconds) &&
+                          row.status === 'ready' ? (
+                            <Badge tone="caution" fontSize={0}>
+                              Short flight (under 1 min)
+                            </Badge>
                           ) : null}
                           <Badge tone={badge === 'needs-details' ? 'caution' : STATUS_TONE[badge]} fontSize={0}>
                             {badge === 'needs-details' ? 'Needs details' : STATUS_LABEL[badge]}

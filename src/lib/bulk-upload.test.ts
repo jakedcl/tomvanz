@@ -4,8 +4,11 @@ import {describe, expect, it} from 'vitest'
 import {
   guessActivity,
   flightFromUpload,
+  countsTowardBulkUpload,
   isFlightLogFile,
   isGpxFile,
+  isShortFlightDuration,
+  SHORT_FLIGHT_UPLOAD_MIN_SECONDS,
   isPhotoFile,
   photoFromUpload,
   plausibleTime,
@@ -83,6 +86,24 @@ describe('runPool', () => {
     })
     expect(done.sort()).toEqual([1, 2, 3, 4, 5, 6, 7])
     expect(peak).toBeLessThanOrEqual(3)
+  })
+})
+
+describe('short flight bulk upload default', () => {
+  it('exports a 60 second minimum', () => {
+    expect(SHORT_FLIGHT_UPLOAD_MIN_SECONDS).toBe(60)
+  })
+
+  it('treats under 60 seconds as short', () => {
+    expect(isShortFlightDuration(59)).toBe(true)
+    expect(isShortFlightDuration(60)).toBe(false)
+    expect(isShortFlightDuration(undefined)).toBe(false)
+  })
+
+  it('includes rows unless explicitly excluded', () => {
+    expect(countsTowardBulkUpload(undefined)).toBe(true)
+    expect(countsTowardBulkUpload(true)).toBe(true)
+    expect(countsTowardBulkUpload(false)).toBe(false)
   })
 })
 

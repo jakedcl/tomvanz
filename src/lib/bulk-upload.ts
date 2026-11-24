@@ -99,6 +99,22 @@ export function isFlightLogFile(file: {name: string}): boolean {
   return isFlightLogFileName(file.name)
 }
 
+/** Flights shorter than this are excluded from bulk upload by default (Tom can opt back in). */
+export const SHORT_FLIGHT_UPLOAD_MIN_SECONDS = 60
+
+export function isShortFlightDuration(durationSeconds: number | undefined | null): boolean {
+  return (
+    typeof durationSeconds === 'number' &&
+    Number.isFinite(durationSeconds) &&
+    durationSeconds < SHORT_FLIGHT_UPLOAD_MIN_SECONDS
+  )
+}
+
+/** Undefined means included (photos/routes and normal flights). */
+export function countsTowardBulkUpload(includeInUpload: boolean | undefined): boolean {
+  return includeInUpload !== false
+}
+
 /** A readable title from a file name: "Afternoon_Ride.gpx" becomes "Afternoon Ride". */
 export function titleFromFileName(name: string): string {
   return name
