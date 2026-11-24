@@ -475,6 +475,22 @@ function clearTrackLayers(map: MapLibreMap) {
   }
 }
 
+/**
+ * The area the map may be panned to: the view that shows everything on the map, plus a generous margin on
+ * every side, so you can look around and zoom out a little but can't drift off into empty ocean or desert.
+ * It's built from the actual view (not just the photos' coordinates) so it always fits the screen shape.
+ */
+function limitBounds(view: LngLatBounds): [[number, number], [number, number]] {
+  const sw = view.getSouthWest()
+  const ne = view.getNorthEast()
+  const latMargin = Math.max((ne.lat - sw.lat) * 0.75, 4)
+  const lngMargin = Math.max((ne.lng - sw.lng) * 0.75, 6)
+  return [
+    [Math.max(-180, sw.lng - lngMargin), Math.max(-85, sw.lat - latMargin)],
+    [Math.min(180, ne.lng + lngMargin), Math.min(85, ne.lat + latMargin)],
+  ]
+}
+
 function syncMap(
   map: MapLibreMap,
   data: MapData,
@@ -551,7 +567,9 @@ function syncMap(
   if (fitToData) {
     if (hasPoint) {
       map.fitBounds(bounds, {padding: 72, maxZoom: 12, duration: 0})
+      map.setMaxBounds(limitBounds(map.getBounds()))
     } else {
+      map.setMaxBounds(null)
       map.jumpTo({center: [0, 20], zoom: 1.4})
     }
   }
