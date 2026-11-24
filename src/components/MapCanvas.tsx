@@ -6,11 +6,16 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import '@/lib/maplibre-worker'
 import {pinViewPadding, shouldFlyToSelection, trackFitPadding} from '@/lib/map-focus'
 import {urlFor} from '@/lib/sanity/image'
-import {PILE_FIT_MAX_ZOOM, pileTolerancePx} from '@/lib/pile'
+import {
+  bunchNearPoint,
+  fitBunchOnMap,
+  overlappingPinBunch,
+  type BunchMember,
+} from '@/lib/map-bunch'
 import {FLIGHT_PATH_COLOR} from '@/lib/flight-color'
 import {trackColor} from '@/lib/track-color'
 import type {FlightSeriesSample} from '@/lib/flight-log'
-import {lineCoordinates, type MapData, type PinDoc, SelectedItem} from '@/lib/sanity/types'
+import {lineCoordinates, type MapData, SelectedItem} from '@/lib/sanity/types'
 import type {StyleSpecification} from 'maplibre-gl'
 
 const ESRI_ATTRIBUTION =
@@ -47,8 +52,10 @@ type Props = {
   /** A pin to outline on the map without selecting it (the card being viewed in the pile strip). */
   highlightId: string | null
   onSelect: (item: SelectedItem | null) => void
-  /** Called with the ids of a pile of photos that zooming can't pull apart. */
-  onPile: (ids: string[]) => void
+  /** Overlapping photos and routes/flights at the same spot. */
+  onPile: (members: BunchMember[]) => void
+  /** Refit when the pile strip is showing (re-tap cluster). */
+  pileMembers?: BunchMember[] | null
   onMapError: () => void
   /** Height of the bottom detail panel so routes fit above it. */
   panelHeight?: number
@@ -126,32 +133,19 @@ function applyThreeD(map: MapLibreMap, on: boolean, tilt = true) {
  * Pins whose thumbnails overlap the one that was tapped (including that pin). Only direct
  * neighbours count, so a long chain of overlapping photos doesn't turn into one giant pile.
  */
-function overlappingPins(map: MapLibreMap, pins: PinDoc[], origin: PinDoc): PinDoc[] {
-  const here = map.project([origin.location.lng, origin.location.lat])
-  const tolerance = pileTolerancePx(map.getZoom())
-  return pins.filter((pin) => {
-    if (pin._id === origin._id) return true
-    const pt = map.project([pin.location.lng, pin.location.lat])
-    return Math.abs(pt.x - here.x) < tolerance && Math.abs(pt.y - here.y) < tolerance
-  })
-}
-
-/**
- * Gently zoom in so a pile of overlapping pins spreads out, leaving room for the card strip.
- * Does nothing when zooming wouldn't help (same spot, or already zoomed in).
- */
-function zoomIntoPile(map: MapLibreMap, group: PinDoc[]) {
-  const bounds = new LngLatBounds()
-  for (const pin of group) bounds.extend([pin.location.lng, pin.location.lat])
-  const sw = bounds.getSouthWest()
-  const ne = bounds.getNorthEast()
-  if (Math.abs(ne.lng - sw.lng) < 1e-5 && Math.abs(ne.lat - sw.lat) < 1e-5) return
-  const camera = map.cameraForBounds(bounds, {
-    padding: {top: 96, bottom: 270, left: 96, right: 96},
-    maxZoom: PILE_FIT_MAX_ZOOM,
-  })
-  if (!camera || camera.zoom == null || camera.zoom <= map.getZoom() + 0.3) return
-  map.easeTo({center: camera.center, zoom: camera.zoom, duration: 650})
+function openBunch(
+  map: MapLibreMap,
+  data: MapData,
+  members: BunchMember[],
+  onPile: (members: BunchMember[]) => void,
+  panelHeight: number,
+) {
+  if (members.length > 1) {
+    onPile(members)
+    fitBunchOnMap(map, data, members, panelHeight)
+    return true
+  }
+  return false
 }
 
 /** Bring a selected pin or track into view. Tapped tracks stay put; ones picked from a list or link fly to it. */
@@ -219,6 +213,7 @@ export function MapCanvas({
   onPile,
   onMapError,
   panelHeight = 0,
+  pileMembers = null,
   onRegisterFlightScrub,
 }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -318,8 +313,16 @@ export function MapCanvas({
         const id = hit?.properties?.id
         const layerId = hit?.layer?.id ?? ''
         if (typeof id === 'string' && id) {
+          const kind = layerId.startsWith('flight-hit-') ? 'flight' : 'track'
+          const primary: BunchMember = {kind, id}
+          const bunch = bunchNearPoint(map, dataRef.current, event.lngLat.lng, event.lngLat.lat, primary)
+          if (
+            openBunch(map, dataRef.current, bunch, onPileRef.current, panelHeightRef.current)
+          ) {
+            return
+          }
           onSelectRef.current({
-            kind: layerId.startsWith('flight-hit-') ? 'flight' : 'track',
+            kind,
             id,
             lng: event.lngLat.lng,
             lat: event.lngLat.lat,
@@ -421,6 +424,12 @@ export function MapCanvas({
     if (!map || !readyRef.current || !selected) return
     focusSelection(map, data, selected, 500, panelHeight)
   }, [selected, data, panelHeight])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !readyRef.current || !pileMembers || pileMembers.length < 2) return
+    fitBunchOnMap(map, data, pileMembers, panelHeight)
+  }, [pileMembers, data, panelHeight])
 
   return <div ref={rootRef} className="isolate h-full w-full" />
 }
@@ -606,7 +615,7 @@ function syncMap(
 type PinRenderCtx = {
   data: MapData
   onSelect: (item: SelectedItem | null) => void
-  onPile: (ids: string[]) => void
+  onPile: (members: BunchMember[]) => void
   getActiveId: () => string | null
 }
 
@@ -676,12 +685,19 @@ function renderPins(
     el.style.cursor = 'pointer'
     el.addEventListener('click', (event) => {
       event.stopPropagation()
-      const group = overlappingPins(map, ctx.data.pins, pin)
-      if (group.length > 1) {
-        // A pile: show its photos as swipeable cards (the tapped one first), and spread them out if we can.
-        const rest = group.filter((item) => item._id !== pin._id)
-        ctx.onPile([pin._id, ...rest.map((item) => item._id)])
-        zoomIntoPile(map, group)
+      const pinGroup = overlappingPinBunch(map, ctx.data.pins, pin)
+      const members = bunchNearPoint(map, ctx.data, pin.location.lng, pin.location.lat, {
+        kind: 'pin',
+        id: pin._id,
+      })
+      if (members.length > 1) {
+        const pinFirst = [
+          {kind: 'pin' as const, id: pin._id},
+          ...members.filter((m) => m.id !== pin._id),
+        ]
+        ctx.onPile(pinFirst)
+        fitBunchOnMap(map, ctx.data, pinFirst, 0)
+        void pinGroup
         return
       }
       ctx.onSelect({kind: 'pin', id: pin._id})

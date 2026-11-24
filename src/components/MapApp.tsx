@@ -17,6 +17,7 @@ import {
   type MapFilterState,
   type ResultItem,
 } from '@/lib/map-filters'
+import type {BunchMember} from '@/lib/map-bunch'
 import type {MapData, PinDoc, SelectedItem} from '@/lib/sanity/types'
 
 const MapCanvas = dynamic(() => import('./MapCanvas').then((mod) => mod.MapCanvas), {
@@ -48,7 +49,7 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
     () => resultList(applyMapFilters(allData, mapFilters), (track) => trackMiles(track)),
     [allData, mapFilters],
   )
-  const [pileIds, setPileIds] = useState<string[] | null>(null)
+  const [pileMembers, setPileMembers] = useState<BunchMember[] | null>(null)
   const [pileIndex, setPileIndex] = useState(0)
   const [mapFailed, setMapFailed] = useState(false)
   const [threeD, setThreeD] = useState(false)
@@ -81,21 +82,24 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
 
   // Any new selection (or a tap on empty map) closes the pile strip.
   const select = useCallback((item: SelectedItem | null) => {
-    setPileIds(null)
+    setPileMembers(null)
     setSelected(item)
   }, [])
 
-  const openPile = useCallback((ids: string[]) => {
+  const openPile = useCallback((members: BunchMember[]) => {
     setSelected(null)
     setPileIndex(0)
-    setPileIds(ids)
+    setPileMembers(members)
   }, [])
 
   const pilePins = useMemo(() => {
-    if (!pileIds) return null
+    if (!pileMembers) return null
     const byId = new Map(data.pins.map((pin) => [pin._id, pin]))
-    return pileIds.map((id) => byId.get(id)).filter((pin): pin is PinDoc => Boolean(pin))
-  }, [pileIds, data])
+    return pileMembers
+      .filter((m) => m.kind === 'pin')
+      .map((m) => byId.get(m.id))
+      .filter((pin): pin is PinDoc => Boolean(pin))
+  }, [pileMembers, data])
 
   // Keep the address bar pointing at whatever is open, so the link can be shared.
   useEffect(() => {
@@ -111,7 +115,7 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
   }, [selected])
 
   const pickResult = useCallback((item: ResultItem) => {
-    setPileIds(null)
+    setPileMembers(null)
     setSelected(
       item.kind === 'pin'
         ? {kind: 'pin', id: item.id}
@@ -138,7 +142,7 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
   return (
     <div
       className="relative h-full w-full overflow-hidden bg-[#e8e8e8]"
-      data-strip={pilePins && pilePins.length > 1 && !card ? 'true' : 'false'}
+      data-strip={pileMembers && pileMembers.length > 1 && !card ? 'true' : 'false'}
       data-detail-open={card ? 'true' : 'false'}
       style={card ? ({['--detail-panel-height' as string]: `${panelHeight}px`}) : undefined}
     >
@@ -152,9 +156,12 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
           threeD={threeD}
           onThreeDGesture={startThreeDFromGesture}
           selected={card}
-          highlightId={pilePins?.[pileIndex]?._id ?? null}
+          highlightId={
+            pileMembers?.[pileIndex]?.kind === 'pin' ? pileMembers[pileIndex]!.id : pilePins?.[pileIndex]?._id ?? null
+          }
           onSelect={select}
           onPile={openPile}
+          pileMembers={pileMembers}
           onMapError={() => setMapFailed(true)}
           panelHeight={card ? panelHeight : 0}
           onRegisterFlightScrub={registerFlightScrub}
@@ -204,11 +211,21 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
           </p>
         </div>
       ) : null}
-      {pilePins && pilePins.length > 1 && !card ? (
+      {pileMembers && pileMembers.length > 1 && !card ? (
         <PileStrip
-          pins={pilePins}
+          data={data}
+          members={pileMembers}
+          index={pileIndex}
           onIndexChange={setPileIndex}
-          onOpen={(id) => select({kind: 'pin', id})}
+          onOpen={(member) =>
+            select(
+              member.kind === 'pin'
+                ? {kind: 'pin', id: member.id}
+                : member.kind === 'flight'
+                  ? {kind: 'flight', id: member.id, fly: true}
+                  : {kind: 'track', id: member.id, fly: true},
+            )
+          }
           onClose={() => select(null)}
         />
       ) : null}
