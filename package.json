@@ -11,6 +11,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "check": "npm run lint && npm run typecheck && npm test",
     "test:droneclips": "node scripts/droneclips-browser-test.mjs",
     "typegen": "sanity schema extract --force && sanity typegen generate"
   },

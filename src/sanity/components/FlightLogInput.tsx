@@ -151,7 +151,7 @@ export function FlightLogInput(props: ObjectInputProps) {
       </Flex>
       {shortFlight ? (
         <Card padding={3} radius={2} tone="caution">
-          <Stack space={3}>
+          <Stack gap={3}>
             <Text size={1}>Short flight (under 1 min)</Text>
             <Flex align="center" gap={2}>
               <Checkbox
