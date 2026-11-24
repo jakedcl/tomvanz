@@ -73,8 +73,24 @@ describe('isCountyName', () => {
 })
 
 describe('stripMunicipalPrefix', () => {
-  it('strips town/village prefixes', () => {
+  it('strips town/village/township prefixes', () => {
     expect(stripMunicipalPrefix('Town of Saugerties')).toBe('Saugerties')
+    expect(stripMunicipalPrefix('Township of Hunter')).toBe('Hunter')
+  })
+})
+
+describe('normalizePlaceTitle', () => {
+  it('strips municipal prefix on whatever field is chosen', () => {
+    expect(
+      pickLocalityLabel({
+        address: {town: 'Town of Saugerties', hamlet: 'Blue Mountain', state: 'New York'},
+      }),
+    ).toBe('Saugerties')
+    expect(
+      pickLocalityLabel({
+        address: {village: 'Town of Hunter', state: 'New York'},
+      }),
+    ).toBe('Hunter')
   })
 })
 

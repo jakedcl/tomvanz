@@ -34,7 +34,7 @@ export const NYC_BOROUGH_NAMES = new Set([
   'Staten Island',
 ])
 
-const MUNICIPAL_PREFIX = /^(town of|city of|village of)\s+/i
+const MUNICIPAL_PREFIX = /^(town of|city of|village of|township of)\s+/i
 
 /** Bump when label selection rules change so cached strings refresh. */
 const GEOCODE_CACHE_VERSION = 'v3'
@@ -79,7 +79,7 @@ export function stripMunicipalPrefix(value: string): string {
 /** Trim street clutter; never append region/state. */
 export function normalizePlaceTitle(raw?: string): string | undefined {
   if (!raw?.trim()) return undefined
-  let s = raw.trim()
+  let s = stripMunicipalPrefix(raw.trim())
   s = s.replace(/^\d+[\s,]+/, '')
   s = s
     .replace(/\d{1,6}\s+[\w\s]+(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Lane|Ln|Way|Court|Ct)\b/gi, '')
@@ -89,9 +89,8 @@ export function normalizePlaceTitle(raw?: string): string | undefined {
   return first.slice(0, 80)
 }
 
-function acceptPlaceName(raw: string, stripMunicipal = false): string | undefined {
-  const value = stripMunicipal ? stripMunicipalPrefix(raw) : raw
-  return normalizePlaceTitle(value)
+function acceptPlaceName(raw: string): string | undefined {
+  return normalizePlaceTitle(raw)
 }
 
 /** Single-name place title (no state, no county) for auto-titles and `place` fields. */
@@ -118,7 +117,7 @@ export function placeTitleFromAddress(addr: Record<string, string>): string | un
 
   const town = addr.town?.trim()
   if (town) {
-    const title = acceptPlaceName(town, true)
+    const title = acceptPlaceName(town)
     if (title) return title
   }
 
@@ -171,7 +170,8 @@ function fallbackFromDisplayName(raw?: string): string | undefined {
 
 export async function reverseGeocodePlace(lat: number, lng: number): Promise<string | undefined> {
   const key = geocodeCacheKey(lat, lng)
-  if (cache.has(key)) return cache.get(key)
+  const cached = cache.get(key)
+  if (cached) return cached
 
   const result = await schedule(async () => {
     const url = new URL('https://nominatim.openstreetmap.org/reverse')
@@ -193,6 +193,6 @@ export async function reverseGeocodePlace(lat: number, lng: number): Promise<str
     return pickLocalityLabel(data)
   })
 
-  cache.set(key, result)
+  if (result) cache.set(key, result)
   return result
 }
