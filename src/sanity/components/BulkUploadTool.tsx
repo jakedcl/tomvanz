@@ -22,7 +22,9 @@ import {
   type Activity,
   type PhotoMeta,
 } from '../../lib/bulk-upload'
-import {photoLinkWindow, planPhotoLinks, type PhotoLinkCandidate} from '../../lib/flight-photo-link'
+import {linkPhotosToFlightDocument} from '../../lib/link-flight-photos'
+import {photoLinkWindow} from '../../lib/flight-photo-link'
+import {postParseFlight, type ParseFlightApiResponse} from '../../lib/parse-flight-api'
 import {effectiveTakenAt} from '../../lib/photo-taken-at'
 import {lineLengthMeters} from '../../lib/simplify-route'
 import {readGpx} from '../lib/parseGpx'
@@ -46,23 +48,10 @@ export type UploaderClient = {
     durationSeconds: number,
   ) => Promise<{unlinkedLabels: string[]}>
   linkPhotoToFlights: (photoId: string, takenAt: string | undefined, fileName: string) => Promise<void>
-  parseFlightLog: (file: File) => Promise<ParseFlightPayload>
+  parseFlightLog: (file: File) => Promise<ParseFlightApiResponse>
 }
 
-type ParseFlightPayload = {
-  defaultTitle: string
-  startedAt?: string
-  place?: string
-  durationSeconds: number
-  distanceMeters: number
-  maxHeightMeters: number
-  aircraft: string
-  displayCoordinates: string
-  series: string
-  videoSegments: {startSeconds: number; endSeconds: number}[]
-  home?: {lat: number; lng: number}
-  noMap?: boolean
-}
+type ParseFlightPayload = ParseFlightApiResponse
 
 type Status =
   | 'reading'
@@ -207,33 +196,12 @@ export function BulkUploadTool() {
     createPhoto: (doc) => client.create(doc),
     createRoute: (doc) => client.create(doc),
     createFlight: (doc) => client.create(doc),
-    linkPhotosToFlight: async (flightId, startedAt, durationSeconds) => {
-      const candidates = await client.fetch<PhotoLinkCandidate[]>(
-        `*[_type == "photo" && !defined(flight)]{
-          _id,
-          takenAt,
-          "fileName": image.asset->originalFilename
-        }`,
-      )
-      const {linkIds, unlinkedLabels} = planPhotoLinks(candidates, startedAt, durationSeconds)
-      await Promise.all(
-        linkIds.map((id) => client.patch(id).set({flight: {_type: 'reference', _ref: flightId}}).commit()),
-      )
-      return {unlinkedLabels}
-    },
+    linkPhotosToFlight: (flightId, startedAt, durationSeconds) =>
+      linkPhotosToFlightDocument(client, flightId, startedAt, durationSeconds),
     parseFlightLog: async (file) => {
       const token = client.config().token
       if (!token) throw new Error('Sign in to Studio to parse flight logs.')
-      const body = new FormData()
-      body.append('file', file)
-      const res = await fetch('/api/parse-flight', {
-        method: 'POST',
-        headers: {Authorization: `Bearer ${token}`},
-        body,
-      })
-      const data = (await res.json()) as ParseFlightPayload & {error?: string}
-      if (!res.ok) throw new Error(data.error ?? 'Could not parse that flight log.')
-      return data
+      return postParseFlight(file, token)
     },
     linkPhotoToFlights: async (photoId, takenAt, fileName) => {
       const when = effectiveTakenAt(takenAt, fileName)

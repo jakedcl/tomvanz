@@ -1,5 +1,7 @@
 import {defineArrayMember, defineField, defineType} from 'sanity'
 
+import {FlightLogInput} from '../components/FlightLogInput'
+
 /**
  * Hidden telemetry for the altitude chart (~1 Hz). Shape: `{t,lng,lat,height,speed,heading,gimbalPitch,battery,mode}`[].
  * `t` is seconds from flight start. Not loaded by mapQuery; fetched when the flight card opens.
@@ -63,6 +65,7 @@ export const flight = defineType({
       title: 'Flight log',
       type: 'file',
       options: {accept: '.txt,text/plain'},
+      components: {input: FlightLogInput},
     }),
     defineField({
       name: 'displayCoordinates',
