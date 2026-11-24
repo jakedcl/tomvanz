@@ -45,10 +45,12 @@ export function isPhotoFile(file: {name: string; type: string}): boolean {
   return file.type.startsWith('image/') || PHOTO_EXTENSIONS.test(file.name)
 }
 
-/** The Photo document created for an uploaded picture. Title is left blank on purpose; it's optional. */
-export function photoFromUpload(assetId: string, meta: PhotoMeta) {
+/** The Photo document created for an uploaded picture. The title is optional and left out when blank. */
+export function photoFromUpload(assetId: string, meta: PhotoMeta, title?: string) {
+  const cleanTitle = title?.trim()
   return {
     _type: 'photo' as const,
+    ...(cleanTitle ? {title: cleanTitle} : {}),
     image: {_type: 'image' as const, asset: {_type: 'reference' as const, _ref: assetId}},
     ...(meta.lat != null && meta.lng != null
       ? {location: {_type: 'geopoint' as const, lat: meta.lat, lng: meta.lng}}

@@ -21,10 +21,7 @@ export const photo = defineType({
       description:
         'Upload the original photo. Its GPS position and date are picked up automatically; if it has no GPS you can drop a pin on the map.',
       type: 'image',
-      options: {
-        accept: 'image/*',
-        metadata: ['exif', 'location'],
-      },
+      options: {accept: 'image/*'},
       components: {input: CatchImageInput},
       validation: (Rule) => Rule.required(),
     }),

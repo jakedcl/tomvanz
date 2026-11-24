@@ -42,11 +42,17 @@ describe('photoFromUpload', () => {
     })
   })
 
-  it('leaves out location and date when the photo had none, and never sets a title', () => {
+  it('leaves out location, date and title when there are none', () => {
     const doc = photoFromUpload('image-abc-800x600-jpg', {})
     expect(doc).not.toHaveProperty('location')
     expect(doc).not.toHaveProperty('takenAt')
     expect(doc).not.toHaveProperty('title')
+  })
+
+  it('adds a trimmed title, and ignores a blank one', () => {
+    expect(photoFromUpload('image-abc-800x600-jpg', {}, '  Monguap  ')).toMatchObject({title: 'Monguap'})
+    expect(photoFromUpload('image-abc-800x600-jpg', {}, '   ')).not.toHaveProperty('title')
+    expect(photoFromUpload('image-abc-800x600-jpg', {}, '')).not.toHaveProperty('title')
   })
 })
 
