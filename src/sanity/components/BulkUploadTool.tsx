@@ -1,10 +1,10 @@
 'use client'
 
-import {useCallback, useRef, useState} from 'react'
-import {Badge, Box, Button, Card, Flex, Spinner, Stack, Text} from '@sanity/ui'
+import {useCallback, useEffect, useRef, useState} from 'react'
+import {Badge, Box, Button, Card, Flex, Spinner, Stack, Text, TextInput} from '@sanity/ui'
 import {useClient} from 'sanity'
 import {useRouter} from 'sanity/router'
-import {isPhotoFile, photoFromUpload, readPhotoMeta, runPool} from '../../lib/bulk-upload'
+import {isPhotoFile, photoFromUpload, readPhotoMeta, runPool, type PhotoMeta} from '../../lib/bulk-upload'
 
 /** The little the uploader needs from the Studio's connection to Sanity. */
 export type UploaderClient = {
@@ -14,7 +14,7 @@ export type UploaderClient = {
   createPhoto: (doc: ReturnType<typeof photoFromUpload>) => Promise<{_id: string}>
 }
 
-type Status = 'queued' | 'uploading' | 'done' | 'no-location' | 'duplicate' | 'skipped' | 'error'
+type Status = 'reading' | 'ready' | 'waiting' | 'uploading' | 'done' | 'no-location' | 'duplicate' | 'skipped' | 'error'
 
 type Row = {
   id: number
@@ -22,12 +22,19 @@ type Row = {
   status: Status
   note?: string
   docId?: string
+  /** A small picture of the file, so the right title goes on the right photo. */
+  preview?: string
+  /** What was read from the file (GPS, date taken). */
+  meta?: PhotoMeta
+  title: string
 }
 
 const CONCURRENCY = 3
 
 const STATUS_LABEL: Record<Status, string> = {
-  queued: 'Waiting',
+  reading: 'Reading',
+  ready: 'Ready',
+  waiting: 'Waiting',
   uploading: 'Uploading',
   done: 'On the map',
   'no-location': 'Needs a location',
@@ -37,7 +44,9 @@ const STATUS_LABEL: Record<Status, string> = {
 }
 
 const STATUS_TONE: Record<Status, 'default' | 'positive' | 'caution' | 'critical' | 'primary'> = {
-  queued: 'default',
+  reading: 'default',
+  ready: 'primary',
+  waiting: 'default',
   uploading: 'primary',
   done: 'positive',
   'no-location': 'caution',
@@ -45,6 +54,9 @@ const STATUS_TONE: Record<Status, 'default' | 'positive' | 'caution' | 'critical
   skipped: 'default',
   error: 'critical',
 }
+
+/** Rows whose title can still be changed or that can still be taken off the list. */
+const editable = (row: Row) => row.status === 'ready' || row.status === 'error'
 
 /** The Studio tool: hands the screen the Studio's own Sanity connection. */
 export function BulkUploadTool() {
@@ -63,8 +75,9 @@ export function BulkUploadTool() {
 }
 
 /**
- * Drop in a pile of photos and each one becomes a Photo: uploaded, placed from its own GPS data,
- * dated from when it was taken. Drone photos are spotted from their DJI file names by the site.
+ * Drop in a pile of photos, give each a title (or take it off the list), then press one button:
+ * each becomes a Photo, placed from its own GPS data and dated from when it was taken.
+ * Nothing is sent to Sanity until that button. Drone photos are spotted from their DJI file names by the site.
  */
 export function BulkUploadView({
   uploader,
@@ -79,18 +92,42 @@ export function BulkUploadView({
   const nextId = useRef(1)
   const filesById = useRef(new Map<number, File>())
   const picker = useRef<HTMLInputElement | null>(null)
+  const previewsById = useRef(new Map<number, string>())
+  // The latest rows, for the upload to read titles typed since the last render.
+  const rowsRef = useRef<Row[]>([])
+  rowsRef.current = rows
 
+  // Give back the preview pictures when the tool closes.
+  useEffect(() => {
+    const files = filesById.current
+    const previews = previewsById.current
+    return () => {
+      for (const url of previews.values()) URL.revokeObjectURL(url)
+      previews.clear()
+      files.clear()
+    }
+  }, [])
   const patchRow = useCallback((id: number, patch: Partial<Row>) => {
     setRows((current) => current.map((row) => (row.id === id ? {...row, ...patch} : row)))
+  }, [])
+
+  const forget = useCallback((ids: number[]) => {
+    for (const id of ids) {
+      const url = previewsById.current.get(id)
+      if (url) URL.revokeObjectURL(url)
+      previewsById.current.delete(id)
+      filesById.current.delete(id)
+    }
   }, [])
 
   const processOne = useCallback(
     async (id: number) => {
       const file = filesById.current.get(id)
-      if (!file) return
+      const row = rowsRef.current.find((item) => item.id === id)
+      if (!file || !row) return
       patchRow(id, {status: 'uploading', note: undefined})
       try {
-        const meta = await readPhotoMeta(file)
+        const meta = row.meta ?? {}
         const asset = await uploader.uploadImage(file)
 
         // Uploading the same photo twice gives back the same asset: don't make a second photo for it.
@@ -100,7 +137,7 @@ export function BulkUploadView({
           return
         }
 
-        const doc = await uploader.createPhoto(photoFromUpload(asset._id, meta))
+        const doc = await uploader.createPhoto(photoFromUpload(asset._id, meta, row.title))
         if (meta.lat == null) {
           patchRow(id, {
             status: 'no-location',
@@ -117,9 +154,10 @@ export function BulkUploadView({
     [uploader, patchRow],
   )
 
-  const runIds = useCallback(
+  const uploadIds = useCallback(
     async (ids: number[]) => {
       setRunning(true)
+      setRows((current) => current.map((row) => (ids.includes(row.id) ? {...row, status: 'waiting', note: undefined} : row)))
       await runPool(ids, CONCURRENCY, processOne)
       setRunning(false)
     },
@@ -129,27 +167,43 @@ export function BulkUploadView({
   const addFiles = useCallback(
     (list: FileList | File[]) => {
       const added: Row[] = []
+      const toRead: {id: number; file: File}[] = []
       for (const file of Array.from(list)) {
         const id = nextId.current++
         if (!isPhotoFile(file)) {
-          added.push({id, name: file.name, status: 'skipped', note: 'Not a photo.'})
+          added.push({id, name: file.name, status: 'skipped', note: 'Not a photo.', title: ''})
           continue
         }
         filesById.current.set(id, file)
-        added.push({id, name: file.name, status: 'queued'})
+        const preview = URL.createObjectURL(file)
+        previewsById.current.set(id, preview)
+        added.push({id, name: file.name, status: 'reading', preview, title: ''})
+        toRead.push({id, file})
       }
       setRows((current) => [...current, ...added])
-      void runIds(added.filter((row) => row.status === 'queued').map((row) => row.id))
+      // Reading the file's GPS and date happens here, before anything is uploaded, so a missing location shows up early.
+      for (const {id, file} of toRead) {
+        void readPhotoMeta(file).then((meta) => {
+          patchRow(id, {
+            status: 'ready',
+            meta,
+            note: meta.lat == null ? 'No GPS in this photo. You’ll need to drop a pin after uploading.' : undefined,
+          })
+        })
+      }
     },
-    [runIds],
+    [patchRow],
   )
 
   const counts = rows.reduce(
     (acc, row) => ({...acc, [row.status]: (acc[row.status] ?? 0) + 1}),
     {} as Partial<Record<Status, number>>,
   )
-  const finished = rows.filter((row) => row.status !== 'queued' && row.status !== 'uploading').length
+  const ready = rows.filter((row) => row.status === 'ready')
+  const reading = rows.some((row) => row.status === 'reading')
   const failed = rows.filter((row) => row.status === 'error').map((row) => row.id)
+  const sent = rows.filter((row) => ['done', 'no-location', 'duplicate', 'error'].includes(row.status)).length
+  const inFlight = rows.filter((row) => row.status === 'waiting' || row.status === 'uploading').length
 
   return (
     <Box padding={4} style={{maxWidth: 760, margin: '0 auto'}}>
@@ -159,8 +213,9 @@ export function BulkUploadView({
             Bulk upload
           </Text>
           <Text size={1} muted>
-            Drop in as many photos as you like. Each is placed from the GPS in the photo and dated from when it was
-            taken. Drone photos are spotted automatically from their file names.
+            Drop in as many photos as you like, give each a title if you want one, remove any you don’t, then press
+            Upload. Each is placed from the GPS in the photo and dated from when it was taken. Drone photos are spotted
+            automatically from their file names.
           </Text>
         </Stack>
 
@@ -207,9 +262,11 @@ export function BulkUploadView({
           <Stack gap={3}>
             <Flex align="center" justify="space-between" gap={3} wrap="wrap">
               <Flex align="center" gap={2}>
-                {running ? <Spinner muted /> : null}
+                {running || reading ? <Spinner muted /> : null}
                 <Text size={1} muted>
-                  {finished} of {rows.length} done
+                  {running
+                    ? `${sent} of ${sent + inFlight} uploaded`
+                    : `${ready.length} ready to upload`}
                   {counts['no-location'] ? ` · ${counts['no-location']} need a location` : ''}
                   {counts.duplicate ? ` · ${counts.duplicate} already uploaded` : ''}
                   {counts.error ? ` · ${counts.error} failed` : ''}
@@ -217,7 +274,7 @@ export function BulkUploadView({
               </Flex>
               <Flex gap={2}>
                 {failed.length > 0 && !running ? (
-                  <Button text="Retry failed" mode="ghost" tone="critical" fontSize={1} onClick={() => void runIds(failed)} />
+                  <Button text="Retry failed" mode="ghost" tone="critical" fontSize={1} onClick={() => void uploadIds(failed)} />
                 ) : null}
                 {!running ? (
                   <Button
@@ -225,11 +282,18 @@ export function BulkUploadView({
                     mode="bleed"
                     fontSize={1}
                     onClick={() => {
+                      forget(rows.map((row) => row.id))
                       setRows([])
-                      filesById.current.clear()
                     }}
                   />
                 ) : null}
+                <Button
+                  text={ready.length === 1 ? 'Upload 1 photo' : `Upload ${ready.length} photos`}
+                  tone="positive"
+                  fontSize={1}
+                  disabled={running || reading || ready.length === 0}
+                  onClick={() => void uploadIds(ready.map((row) => row.id))}
+                />
               </Flex>
             </Flex>
 
@@ -237,11 +301,33 @@ export function BulkUploadView({
               <Stack>
                 {rows.map((row, index) => (
                   <Card key={row.id} padding={3} borderTop={index > 0} tone="default">
-                    <Flex align="center" justify="space-between" gap={3}>
-                      <Stack gap={2} style={{minWidth: 0}}>
-                        <Text size={1} weight="medium" textOverflow="ellipsis">
+                    <Flex align="center" gap={3}>
+                      {row.preview ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={row.preview}
+                          alt=""
+                          style={{width: 56, height: 56, objectFit: 'cover', borderRadius: 3, flexShrink: 0}}
+                        />
+                      ) : null}
+                      <Stack gap={2} style={{minWidth: 0, flex: 1}}>
+                        <Text size={1} muted textOverflow="ellipsis">
                           {row.name}
                         </Text>
+                        {editable(row) ? (
+                          <TextInput
+                            fontSize={1}
+                            padding={2}
+                            placeholder="Title (optional)"
+                            aria-label={`Title for ${row.name}`}
+                            value={row.title}
+                            onChange={(event) => patchRow(row.id, {title: event.currentTarget.value})}
+                          />
+                        ) : row.title ? (
+                          <Text size={1} weight="medium" textOverflow="ellipsis">
+                            {row.title}
+                          </Text>
+                        ) : null}
                         {row.note ? (
                           <Text size={1} muted>
                             {row.note}
@@ -249,6 +335,19 @@ export function BulkUploadView({
                         ) : null}
                       </Stack>
                       <Flex align="center" gap={2} style={{flexShrink: 0}}>
+                        {editable(row) ? (
+                          <Button
+                            text="Remove"
+                            mode="bleed"
+                            tone="critical"
+                            fontSize={1}
+                            padding={2}
+                            onClick={() => {
+                              forget([row.id])
+                              setRows((current) => current.filter((item) => item.id !== row.id))
+                            }}
+                          />
+                        ) : null}
                         {row.docId && (row.status === 'no-location' || row.status === 'duplicate') ? (
                           <Button
                             text="Open"
