@@ -55,17 +55,17 @@ export function MapPanel({header, children, collapsed, onToggleCollapsed, level,
     }
   }, [onHeights])
 
-  function begin(y: number, pointerId?: number) {
+  function begin(y: number, time: number, pointerId?: number) {
     if (!panel.current || !top.current) return
     const height = panel.current.getBoundingClientRect().height
     drag.current = {
       startY: y, startHeight: height, height, pointerId, moved: false,
-      samples: [{y, time: performance.now()}],
+      samples: [{y, time}],
       heights: readHeights(panel.current, top.current),
     }
   }
 
-  function move(y: number) {
+  function move(y: number, time: number) {
     const active = drag.current
     const node = panel.current
     if (!active || !node) return false
@@ -73,14 +73,13 @@ export function MapPanel({header, children, collapsed, onToggleCollapsed, level,
     if (!active.moved && Math.abs(delta) < 5) return false
     active.moved = true
     active.height = Math.min(active.heights.full, Math.max(active.heights.peek, active.startHeight + delta))
-    const time = performance.now()
-    active.samples = [...active.samples.filter((sample) => time - sample.time <= 100), {y, time}]
+    active.samples = [...active.samples.filter((sample) => time - sample.time <= 120), {y, time}]
     node.dataset.dragging = 'true'
     node.style.setProperty('--map-sheet-drag-height', `${active.height}px`)
     return true
   }
 
-  function end(cancelled: boolean) {
+  function end(cancelled: boolean, time: number) {
     const active = drag.current
     const node = panel.current
     drag.current = null
@@ -88,7 +87,7 @@ export function MapPanel({header, children, collapsed, onToggleCollapsed, level,
     const [first] = active.samples
     const last = active.samples.at(-1)!
     const elapsed = Math.max(last.time - first.time, 16)
-    const velocity = performance.now() - last.time < 90 ? (first.y - last.y) / elapsed : 0
+    const velocity = time - last.time < 140 ? (first.y - last.y) / elapsed : 0
     const next = cancelled ? level : snapSheet(level, active.height, velocity, active.heights)
     delete node.dataset.dragging
     node.style.removeProperty('--map-sheet-drag-height')
@@ -99,11 +98,11 @@ export function MapPanel({header, children, collapsed, onToggleCollapsed, level,
     if (!window.matchMedia(mobileQuery).matches || event.button !== 0 || !event.isPrimary ||
       (event.target as HTMLElement).closest('input')) return
     suppressClick.current = false
-    begin(event.clientY, event.pointerId)
+    begin(event.clientY, event.timeStamp, event.pointerId)
   }
 
   function pointerMove(event: PointerEvent<HTMLDivElement>) {
-    if (drag.current?.pointerId !== event.pointerId || !move(event.clientY)) return
+    if (drag.current?.pointerId !== event.pointerId || !move(event.clientY, event.timeStamp)) return
     if (!event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.setPointerCapture(event.pointerId)
     suppressClick.current = true
   }
@@ -112,11 +111,11 @@ export function MapPanel({header, children, collapsed, onToggleCollapsed, level,
   useEffect(() => {
     const list = resultsRef.current
     if (!list) return
-    let start: {x: number; y: number} | null = null
+    let start: {x: number; y: number; time: number} | null = null
     let pulling = false
     const touchStart = (event: TouchEvent) => {
       start = window.matchMedia(mobileQuery).matches && event.touches.length === 1 && list.scrollTop <= 0
-        ? {x: event.touches[0].clientX, y: event.touches[0].clientY}
+        ? {x: event.touches[0].clientX, y: event.touches[0].clientY, time: event.timeStamp}
         : null
     }
     const touchMove = (event: TouchEvent) => {
@@ -129,14 +128,14 @@ export function MapPanel({header, children, collapsed, onToggleCollapsed, level,
           start = null
           return
         }
-        begin(start.y)
+        begin(start.y, start.time)
         pulling = true
       }
       event.preventDefault()
-      move(clientY)
+      move(clientY, event.timeStamp)
     }
     const touchEnd = (event: TouchEvent) => {
-      if (pulling) end(event.type === 'touchcancel')
+      if (pulling) end(event.type === 'touchcancel', event.timeStamp)
       pulling = false
       start = null
     }
@@ -170,8 +169,8 @@ export function MapPanel({header, children, collapsed, onToggleCollapsed, level,
           className="map-panel-top"
           onPointerDown={pointerDown}
           onPointerMove={pointerMove}
-          onPointerUp={(event) => { if (drag.current?.pointerId === event.pointerId) end(false) }}
-          onPointerCancel={(event) => { if (drag.current?.pointerId === event.pointerId) end(true) }}
+          onPointerUp={(event) => { if (drag.current?.pointerId === event.pointerId) end(false, event.timeStamp) }}
+          onPointerCancel={(event) => { if (drag.current?.pointerId === event.pointerId) end(true, event.timeStamp) }}
           onClickCapture={(event) => {
             if (event.detail && suppressClick.current) {
               event.preventDefault()
