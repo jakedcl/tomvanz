@@ -1,19 +1,63 @@
 import {lineCoordinates, type FlightDoc, type MapData, type PinDoc, type TrackDoc} from '@/lib/sanity/types'
 
+/*
+ * How the filters think
+ * ---------------------
+ * Everything on the map lives in one of two worlds: GROUND (ground photos, bike rides, hikes, other routes) or
+ * AERIAL (aerial photos, drone flights). A sub-filter pill belongs to one world. Once a pill from one world is
+ * on, the other world's pills are switched off and can't be chosen, so a combination like "aerial hikes" can't
+ * exist. The world then applies to everything shown: choosing Hikes also limits the photos to ground photos.
+ * The pills in the panel are only ever changed through the toggle functions below, which keep this true.
+ */
+
+export type World = 'ground' | 'aerial'
+export type PhotoKind = 'aerial' | 'ground'
+export type RouteKind = 'bike' | 'hike' | 'other' | 'flights'
+export type Group = 'photos' | 'routes'
+
 export type MapFilterState = {
   query: string
-  /**
-   * Empty means "everything". Top level: `pin:all`, `track:all` (Routes).
-   * Routes sub-filters: `track:bike`, `track:hike`, `flight:all` (Flights), `flight:aircraft:…`.
-   */
-  types: string[]
-  /** Only photos shot with a drone. */
-  drone: boolean
+  /** The Photos pill. */
+  photos: boolean
+  /** The Routes pill. */
+  routes: boolean
+  /** Sub-pills of Photos. Empty means every photo (within the world, if one is chosen). */
+  photoKinds: PhotoKind[]
+  /** Sub-pills of Routes. Empty means every route (within the world, if one is chosen). */
+  routeKinds: RouteKind[]
+  /** Drone models, only while the Flights sub-pill is on. Lower-cased. Empty means every model. */
+  aircraft: string[]
 }
 
-export const emptyMapFilters: MapFilterState = {query: '', types: [], drone: false}
+export const emptyMapFilters: MapFilterState = {
+  query: '',
+  photos: false,
+  routes: false,
+  photoKinds: [],
+  routeKinds: [],
+  aircraft: [],
+}
 
-export type TypeOption = {value: string; label: string}
+export type Pill = {kind: PhotoKind | RouteKind; label: string}
+export type AircraftPill = {value: string; label: string}
+
+const WORLD_OF: Record<PhotoKind | RouteKind, World> = {
+  aerial: 'aerial',
+  ground: 'ground',
+  bike: 'ground',
+  hike: 'ground',
+  other: 'ground',
+  flights: 'aerial',
+}
+
+const KIND_LABELS: Record<PhotoKind | RouteKind, string> = {
+  aerial: 'Aerial',
+  ground: 'Ground',
+  bike: 'Bike rides',
+  hike: 'Hikes',
+  other: 'Other routes',
+  flights: 'Flights',
+}
 
 const TRACK_LABELS: Record<string, string> = {
   bike: 'Bike rides',
@@ -21,23 +65,9 @@ const TRACK_LABELS: Record<string, string> = {
   other: 'Other routes',
 }
 
-/** Every photo is of the one sort. */
-export function pinType() {
-  return 'pin:photo'
-}
+const ROUTE_KIND_ORDER: RouteKind[] = ['bike', 'hike', 'other', 'flights']
 
-export function trackType(track: TrackDoc) {
-  return `track:${track.activity}`
-}
-
-/** Routes sub-filter: drone flight paths (not a top-level group). */
-export function flightType() {
-  return 'flight:all'
-}
-
-export function flightAircraftType(aircraft: string) {
-  return `flight:aircraft:${aircraft.toLowerCase()}`
-}
+const aircraftKey = (model: string) => model.trim().toLowerCase()
 
 function dateOf(value?: string): number | null {
   if (!value) return null
@@ -45,149 +75,118 @@ function dateOf(value?: string): number | null {
   return Number.isNaN(time) ? null : time
 }
 
-/** The route kinds that actually exist in the data, so the panel only offers real choices. */
+/** The pills that actually exist in the data, so the panel only offers real choices. */
 export function filterOptions(data: MapData) {
-  const routeKinds = new Map<string, string>()
-  for (const track of data.tracks) routeKinds.set(trackType(track), TRACK_LABELS[track.activity] ?? 'Routes')
-  const kinds: TypeOption[] = Object.keys(TRACK_LABELS)
-    .map((k) => `track:${k}`)
-    .filter((value) => routeKinds.has(value))
-    .map((value) => ({value, label: routeKinds.get(value)!}))
+  const hasAerialPhotos = data.pins.some((pin) => pin.isDrone)
+  const hasGroundPhotos = data.pins.some((pin) => !pin.isDrone)
+  // "Aerial" / "Ground" only help when there are both kinds of photo to tell apart.
+  const photoKinds: Pill[] =
+    hasAerialPhotos && hasGroundPhotos
+      ? [
+          {kind: 'aerial', label: KIND_LABELS.aerial},
+          {kind: 'ground', label: KIND_LABELS.ground},
+        ]
+      : []
 
-  const aircraftModels = new Map<string, string>()
+  const present = new Set<RouteKind>()
+  for (const track of data.tracks) present.add(track.activity)
+  if (data.flights.length > 0) present.add('flights')
+  const routeKinds: Pill[] = ROUTE_KIND_ORDER.filter((kind) => present.has(kind)).map((kind) => ({
+    kind,
+    label: KIND_LABELS[kind],
+  }))
+
+  const models = new Map<string, string>()
   for (const flight of data.flights) {
     const model = flight.aircraft?.trim()
-    if (!model) continue
-    const key = flightAircraftType(model)
-    aircraftModels.set(key, model)
+    if (model) models.set(aircraftKey(model), model)
   }
-  const aircraftChips: TypeOption[] = [...aircraftModels.entries()]
+  const aircraft: AircraftPill[] = [...models.entries()]
     .map(([value, label]) => ({value, label}))
     .sort((a, b) => a.label.localeCompare(b.label))
 
-  const groups: TypeOption[] = []
-  if (data.pins.length > 0) groups.push({value: 'pin:all', label: 'Photos'})
-  if (data.tracks.length > 0 || data.flights.length > 0) {
-    groups.push({value: 'track:all', label: 'Routes'})
-  }
-
-  const hasDrone = data.pins.some((pin) => pin.isDrone)
-  const routesExtras: TypeOption[] =
-    data.flights.length > 0 ? [{value: flightType(), label: 'Flights'}] : []
-  return {groups, routeKinds: kinds, aircraftChips, hasDrone, routesExtras}
-}
-
-export type FilterSubRowParent = 'photos' | 'routes' | 'flights'
-
-export type FilterSubRow = {
-  parent: FilterSubRowParent
-  depth: number
-  label: string
-}
-
-function photosParentActive(state: MapFilterState) {
-  return state.drone || state.types.includes('pin:all') || state.types.includes(pinType())
-}
-
-function routesParentActive(state: MapFilterState) {
-  return state.types.includes('track:all')
-}
-
-function flightModelsRowActive(state: MapFilterState) {
-  return state.types.includes(flightType())
-}
-
-const SUB_ROW_PARENT_ORDER: Record<FilterSubRowParent, number> = {
-  photos: 0,
-  routes: 1,
-  flights: 2,
-}
-
-/** Sub-filter rows: Photos → Routes subs → drone models when Flights sub is on. */
-export function filterSubRows(
-  state: MapFilterState,
-  options: ReturnType<typeof filterOptions>,
-): FilterSubRow[] {
-  const rows: FilterSubRow[] = []
-  if (options.hasDrone && photosParentActive(state)) {
-    rows.push({parent: 'photos', depth: 1, label: 'Photos'})
-  }
-  if ((options.routeKinds.length > 0 || options.routesExtras.length > 0) && routesParentActive(state)) {
-    rows.push({parent: 'routes', depth: 1, label: 'Routes'})
-  }
-  if (options.aircraftChips.length > 0 && flightModelsRowActive(state)) {
-    rows.push({parent: 'flights', depth: 2, label: 'Drone models'})
-  }
-  return rows.sort(
-    (a, b) => a.depth - b.depth || SUB_ROW_PARENT_ORDER[a.parent] - SUB_ROW_PARENT_ORDER[b.parent],
-  )
-}
-
-function trackSubFilters(state: MapFilterState) {
-  return state.types.filter((t) => t.startsWith('track:') && t !== 'track:all')
-}
-
-function flightAircraftSubFilters(state: MapFilterState) {
-  return state.types.filter((t) => t.startsWith('flight:aircraft:'))
-}
-
-function routeSubFilters(state: MapFilterState) {
   return {
-    trackKinds: trackSubFilters(state),
-    flights: state.types.includes(flightType()),
+    hasPhotos: data.pins.length > 0,
+    hasRoutes: data.tracks.length > 0 || data.flights.length > 0,
+    photoKinds,
+    routeKinds,
+    aircraft,
   }
 }
 
-function routesCategoryActive(state: MapFilterState) {
-  if (state.types.length === 0) return true
-  return (
-    state.types.includes('track:all') ||
-    trackSubFilters(state).length > 0 ||
-    state.types.includes(flightType()) ||
-    flightAircraftSubFilters(state).length > 0
-  )
+export type FilterOptions = ReturnType<typeof filterOptions>
+
+/** Which world the chosen sub-pills put us in, or null when none is chosen yet. */
+export function worldOf(state: MapFilterState): World | null {
+  const chosen = [...(state.photos ? state.photoKinds : []), ...(state.routes ? state.routeKinds : [])]
+  const first = chosen[0]
+  return first ? WORLD_OF[first] : null
 }
 
-function routeFilterNarrowed(state: MapFilterState) {
-  const {trackKinds, flights} = routeSubFilters(state)
-  return trackKinds.length > 0 || flights
-}
-
-function photosInScope(state: MapFilterState) {
-  if (state.types.length === 0) return true
-  return state.types.includes('pin:all') || state.types.includes(pinType())
+/** Why a sub-pill can't be chosen right now (the pill in the other world that's on), or null if it can. */
+export function pillBlockedBy(state: MapFilterState, kind: PhotoKind | RouteKind): string | null {
+  const world = worldOf(state)
+  if (world === null || WORLD_OF[kind] === world) return null
+  const blocker = [...state.photoKinds, ...state.routeKinds].find((chosen) => WORLD_OF[chosen] === world)
+  return blocker ? KIND_LABELS[blocker] : null
 }
 
 /**
- * Map legacy top-level `flight:all` (old Flights pill) to Routes + Flights sub-filter.
- * Ensure aircraft chips imply the Flights sub-filter too.
+ * Makes any state valid: sub-pills only while their parent is on, drone models only while Flights is on, and
+ * only one world (if two sneak in, ground wins). The panel can't produce a bad state; this is the safety net.
  */
 export function normalizeMapFilters(state: MapFilterState): MapFilterState {
-  if (!filtersActive(state)) return state
-  const types = new Set(state.types)
-  const hasFlightFilter =
-    types.has(flightType()) || [...types].some((t) => t.startsWith('flight:aircraft:'))
-  if (hasFlightFilter && !types.has('track:all')) {
-    types.add('track:all')
+  let photoKinds = state.photos ? [...new Set(state.photoKinds)] : []
+  let routeKinds = state.routes ? [...new Set(state.routeKinds)] : []
+  const worlds = new Set([...photoKinds, ...routeKinds].map((kind) => WORLD_OF[kind]))
+  if (worlds.has('ground') && worlds.has('aerial')) {
+    photoKinds = photoKinds.filter((kind) => WORLD_OF[kind] === 'ground')
+    routeKinds = routeKinds.filter((kind) => WORLD_OF[kind] === 'ground')
   }
-  if ([...types].some((t) => t.startsWith('flight:aircraft:')) && !types.has(flightType())) {
-    types.add(flightType())
-  }
-  return {...state, types: [...types]}
+  const aircraft = routeKinds.includes('flights') ? [...new Set(state.aircraft)] : []
+  return {...state, photoKinds, routeKinds, aircraft}
 }
 
-/** Flat list for tests and legacy callers. */
-export function flatTypeOptions(data: MapData) {
-  const {groups, routeKinds, aircraftChips, routesExtras} = filterOptions(data)
-  return [...groups, ...routeKinds, ...routesExtras, ...aircraftChips]
+/** The Photos or Routes pill. Turning it off also turns off the pills that hang off it. */
+export function toggleGroup(state: MapFilterState, group: Group): MapFilterState {
+  return normalizeMapFilters({...state, [group]: !state[group]})
+}
+
+/** A sub-pill. Does nothing if it belongs to the other world (it can't be chosen). */
+export function toggleKind(state: MapFilterState, kind: PhotoKind | RouteKind): MapFilterState {
+  const isPhoto = kind === 'aerial' || kind === 'ground'
+  const list = (isPhoto ? state.photoKinds : state.routeKinds) as (PhotoKind | RouteKind)[]
+  if (list.includes(kind)) {
+    const next = list.filter((item) => item !== kind)
+    return normalizeMapFilters({...state, [isPhoto ? 'photoKinds' : 'routeKinds']: next})
+  }
+  if (pillBlockedBy(state, kind)) return state
+  return normalizeMapFilters({
+    ...state,
+    [isPhoto ? 'photoKinds' : 'routeKinds']: [...list, kind],
+  })
+}
+
+/** A drone model, shown while Flights is on. */
+export function toggleAircraft(state: MapFilterState, model: string): MapFilterState {
+  const key = aircraftKey(model)
+  const aircraft = state.aircraft.includes(key) ? state.aircraft.filter((item) => item !== key) : [...state.aircraft, key]
+  return normalizeMapFilters({...state, aircraft})
 }
 
 export function filtersActive(state: MapFilterState) {
-  return state.query.trim() !== '' || state.types.length > 0 || state.drone
+  return activeFilterCount(state) > 0
 }
 
 export function activeFilterCount(state: MapFilterState) {
-  return (state.query.trim() ? 1 : 0) + state.types.length + (state.drone ? 1 : 0)
+  return (
+    (state.query.trim() ? 1 : 0) +
+    (state.photos ? 1 : 0) +
+    (state.routes ? 1 : 0) +
+    state.photoKinds.length +
+    state.routeKinds.length +
+    state.aircraft.length
+  )
 }
 
 function matchesQuery(query: string, ...fields: (string | undefined)[]) {
@@ -196,65 +195,52 @@ function matchesQuery(query: string, ...fields: (string | undefined)[]) {
   return q.split(/\s+/).every((word) => fields.some((field) => field?.toLowerCase().includes(word)))
 }
 
-function pinTypeOk(state: MapFilterState) {
-  if (!photosInScope(state)) return false
-  if (state.types.length === 0) return true
-  return state.types.includes(pinType()) || state.types.includes('pin:all')
+/** With neither pill on, everything shows; with one on, only that sort does. */
+const showsPhotos = (state: MapFilterState) => state.photos || !state.routes
+const showsRoutes = (state: MapFilterState) => state.routes || !state.photos
+
+function pinOk(state: MapFilterState, world: World | null, pin: PinDoc) {
+  if (!showsPhotos(state)) return false
+  const kind: PhotoKind = pin.isDrone ? 'aerial' : 'ground'
+  if (state.photoKinds.length > 0) return state.photoKinds.includes(kind)
+  return world === null || WORLD_OF[kind] === world
 }
 
-function trackTypeOk(state: MapFilterState, track: TrackDoc) {
-  if (state.types.length === 0) return true
-  if (!routesCategoryActive(state)) return false
-  if (!state.types.includes('track:all') && trackSubFilters(state).length > 0) {
-    return trackSubFilters(state).includes(trackType(track))
-  }
-  if (!state.types.includes('track:all')) return false
-  if (!routeFilterNarrowed(state)) return true
-  const {trackKinds} = routeSubFilters(state)
-  if (trackKinds.length === 0) return false
-  return trackKinds.includes(trackType(track))
+function trackOk(state: MapFilterState, world: World | null, track: TrackDoc) {
+  if (!showsRoutes(state)) return false
+  if (state.routeKinds.length > 0) return state.routeKinds.includes(track.activity)
+  return world === null || world === 'ground'
 }
 
-function flightTypeOk(state: MapFilterState, flight: FlightDoc) {
-  if (state.types.length === 0) return true
-  if (!routesCategoryActive(state)) return false
-  if (!state.types.includes('track:all') && !state.types.includes(flightType())) {
-    return flightAircraftSubFilters(state).length > 0
-      ? Boolean(
-          flight.aircraft && flightAircraftSubFilters(state).includes(flightAircraftType(flight.aircraft)),
-        )
-      : false
+function flightOk(state: MapFilterState, world: World | null, flight: FlightDoc) {
+  if (!showsRoutes(state)) return false
+  if (state.routeKinds.length > 0) {
+    if (!state.routeKinds.includes('flights')) return false
+    if (state.aircraft.length === 0) return true
+    return Boolean(flight.aircraft && state.aircraft.includes(aircraftKey(flight.aircraft)))
   }
-  if (!state.types.includes('track:all')) return false
-  if (!routeFilterNarrowed(state)) return true
-  if (!routeSubFilters(state).flights) return false
-  const aircraft = flightAircraftSubFilters(state)
-  if (aircraft.length > 0) {
-    return Boolean(flight.aircraft && aircraft.includes(flightAircraftType(flight.aircraft)))
-  }
-  return true
+  return world === null || world === 'aerial'
 }
 
-export function applyMapFilters(data: MapData, state: MapFilterState): MapData {
-  const normalized = normalizeMapFilters(state)
-  if (!filtersActive(normalized)) return data
+export function applyMapFilters(data: MapData, input: MapFilterState): MapData {
+  const state = normalizeMapFilters(input)
+  if (!filtersActive(state)) return data
+  const world = worldOf(state)
   return {
     ...data,
     pins: data.pins.filter(
       (pin) =>
-        pinTypeOk(normalized) &&
-        (!normalized.drone || pin.isDrone === true) &&
-        matchesQuery(normalized.query, pin.title, pin.note, pin.isDrone ? 'drone' : undefined),
+        pinOk(state, world, pin) &&
+        matchesQuery(state.query, pin.title, pin.note, pin.isDrone ? 'drone' : undefined),
     ),
     tracks: data.tracks.filter(
       (track) =>
-        trackTypeOk(normalized, track) &&
-        matchesQuery(normalized.query, track.title, TRACK_LABELS[track.activity]),
+        trackOk(state, world, track) && matchesQuery(state.query, track.title, TRACK_LABELS[track.activity]),
     ),
     flights: data.flights.filter(
       (flight) =>
-        flightTypeOk(normalized, flight) &&
-        matchesQuery(normalized.query, flight.title, flight.place, flight.aircraft, 'flight', 'drone'),
+        flightOk(state, world, flight) &&
+        matchesQuery(state.query, flight.title, flight.place, flight.aircraft, 'flight', 'drone'),
     ),
   }
 }
