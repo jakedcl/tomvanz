@@ -15,12 +15,15 @@ export function easeBearing(current: number, target: number, dtSeconds: number, 
   return ((next % 360) + 360) % 360
 }
 
-/** The follow camera: behind and above the marker, looking along its path. */
+/**
+ * The follow camera: close behind and a little above the marker, looking along its path. At this tilt the camera
+ * sits about 200 m back (a flight) or 230 m (a route) at mid latitudes; each zoom level halves that distance.
+ */
 export const FOLLOW_PITCH = 66
-export const FOLLOW_ZOOM: Record<'flight' | 'route', number> = {flight: 16.2, route: 15.6}
+export const FOLLOW_ZOOM: Record<'flight' | 'route', number> = {flight: 18.4, route: 18.2}
 /** How quickly the camera turns to the direction of travel (seconds). */
 export const FOLLOW_BEARING_TAU = 1.1
-export const FOLLOW_POSITION_TAU = 0.35
+export const FOLLOW_POSITION_TAU = 0.25
 
 export type CameraPose = {
   lng: number

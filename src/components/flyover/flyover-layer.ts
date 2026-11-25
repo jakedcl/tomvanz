@@ -3,8 +3,6 @@ import {
   BufferGeometry,
   Camera,
   DoubleSide,
-  Line,
-  LineBasicMaterial,
   Matrix4,
   Mesh,
   Scene,
@@ -34,7 +32,7 @@ export type MarkerState = {
   lat: number
   /** Where the marker is, in meters as the terrain is drawn. */
   altitude: number
-  /** The terrain under it, so a line can be dropped to the ground. */
+  /** The terrain under it. */
   ground: number
   /** Sit on the ground (a route) rather than float (a flight). */
   onGround: boolean
@@ -133,7 +131,6 @@ export class FlyoverLayer implements CustomLayerInterface {
   private markerScene: Scene | null = null
   private markerMesh: Mesh | null = null
   private markerMaterial: ShaderMaterial | null = null
-  private dropLine: Line | null = null
   private markerOrigin = {x: 0, y: 0, s: 1}
 
   constructor(options: {tubeColor: string; tubePx?: number; selectedPx?: number}) {
@@ -369,12 +366,8 @@ export class FlyoverLayer implements CustomLayerInterface {
     })
     this.markerMesh = new Mesh(new SphereGeometry(1, 18, 12), this.markerMaterial)
     this.markerMesh.frustumCulled = false
-    const lineGeometry = new BufferGeometry()
-    lineGeometry.setAttribute('position', new BufferAttribute(new Float32Array(6), 3))
-    this.dropLine = new Line(lineGeometry, new LineBasicMaterial({color: 0xffffff, transparent: true, opacity: 0.75}))
-    this.dropLine.frustumCulled = false
     this.markerScene = new Scene()
-    this.markerScene.add(this.dropLine, this.markerMesh)
+    this.markerScene.add(this.markerMesh)
   }
 
   private updateMarker(mpp: number) {
@@ -386,24 +379,15 @@ export class FlyoverLayer implements CustomLayerInterface {
     this.markerMesh!.position.set(0, 0, z)
     this.markerMaterial!.uniforms.uRadius!.value = radius
     this.markerMaterial!.uniforms.uColor!.value = rgb(marker.color)
-    const line = this.dropLine!
-    line.visible = !marker.onGround && z - marker.ground > radius * 1.5
-    const attr = line.geometry.getAttribute('position') as BufferAttribute
-    attr.setXYZ(0, 0, 0, z - radius)
-    attr.setXYZ(1, 0, 0, marker.ground)
-    attr.needsUpdate = true
   }
 
   private disposeMarker() {
     this.markerMesh?.geometry.dispose()
     this.markerMaterial?.dispose()
-    this.dropLine?.geometry.dispose()
-    ;(this.dropLine?.material as LineBasicMaterial | undefined)?.dispose()
     this.markerScene?.clear()
     this.markerScene = null
     this.markerMesh = null
     this.markerMaterial = null
-    this.dropLine = null
   }
 }
 
