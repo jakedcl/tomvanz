@@ -5,7 +5,9 @@ import {Button, Card, Flex, Stack, Text} from '@sanity/ui'
 import exifr from 'exifr'
 import {PatchEvent, set, unset, useClient, useFormValue, type ObjectInputProps} from 'sanity'
 import {patchTitleIfEmpty, photoTitleFallback, titleFromCoordinates} from '@/lib/auto-title'
-import {readPhotoMeta} from '../../lib/bulk-upload'
+import {SANITY_IMAGE_EXTRACT} from '../../lib/photo-exif'
+import {readPhotoMetaWithAltitude} from '../../lib/photo-exif'
+import {isDroneFileName} from '../../lib/drone'
 import {postReverseGeocodePlace} from '@/lib/reverse-geocode-client'
 
 type GpsStatus = 'idle' | 'found' | 'missing' | 'manual'
@@ -65,10 +67,18 @@ export function CatchImageInput(props: ObjectInputProps) {
   }, [assetRef, hasLocation, client])
 
   /** Saves the date the photo was taken (read from the file in the browser) unless one is already set. */
-  async function patchTakenAt(takenAt: string) {
+  async function patchFromExif(meta: Awaited<ReturnType<typeof readPhotoMetaWithAltitude>>, fileName: string) {
     if (!documentId) return
     const draftId = documentId.startsWith('drafts.') ? documentId : `drafts.${documentId}`
-    await client.patch(draftId).setIfMissing({takenAt}).commit()
+    const drone = isDroneFileName(fileName)
+    const fields: Record<string, unknown> = {}
+    if (meta.takenAt) fields.takenAt = meta.takenAt
+    if (meta.cameraMake) fields.cameraMake = meta.cameraMake
+    if (meta.cameraModel) fields.cameraModel = meta.cameraModel
+    if (drone && meta.altitudeMeters != null) fields.altitudeMeters = meta.altitudeMeters
+    if (drone) fields.drone = true
+    if (Object.keys(fields).length === 0) return
+    await client.patch(draftId).setIfMissing(fields).commit()
   }
 
   async function patchLocation(lat: number, lng: number) {
@@ -91,8 +101,8 @@ export function CatchImageInput(props: ObjectInputProps) {
 
     // The date comes from the file itself, read here in the browser and saved on the photo. (Sanity's
     // own copy of the file's metadata is deliberately not asked for: it is publicly readable.)
-    const {takenAt} = await readPhotoMeta(file)
-    if (takenAt) await patchTakenAt(takenAt)
+    const meta = await readPhotoMetaWithAltitude(file, file.name)
+    await patchFromExif(meta, file.name)
 
     if (!currentTitle?.trim() && documentId) {
       const draftId = documentId.startsWith('drafts.') ? documentId : `drafts.${documentId}`
@@ -113,7 +123,10 @@ export function CatchImageInput(props: ObjectInputProps) {
       }
     }
 
-    const asset = await client.assets.upload('image', file, {filename: file.name})
+    const asset = await client.assets.upload('image', file, {
+      filename: file.name,
+      extract: [...SANITY_IMAGE_EXTRACT],
+    })
     props.onChange(
       PatchEvent.from(
         set({

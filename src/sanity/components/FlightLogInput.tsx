@@ -65,6 +65,11 @@ export function FlightLogInput(props: ObjectInputProps) {
             id,
             parsed.startedAt,
             parsed.durationSeconds,
+            {
+              endedAt: parsed.endedAt,
+              aircraft: parsed.aircraft,
+              displayCoordinates: parsed.displayCoordinates,
+            },
           )
           if (unlinkedLabels.length > 0) {
             setLinkedNote(
@@ -97,6 +102,8 @@ export function FlightLogInput(props: ObjectInputProps) {
         'distanceMeters',
         'maxHeightMeters',
         'aircraft',
+        'aircraftSerial',
+        'endedAt',
         'startedAt',
         'place',
         'home',

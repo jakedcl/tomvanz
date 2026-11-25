@@ -1,6 +1,7 @@
 import {DJILog, type Frame, type KeychainFeaturePoint} from 'dji-log-parser-js'
 
 import {placeAutoTitle} from './auto-title'
+import {flightEndedAtIso} from './flight-times'
 import {lineLengthMeters, prepareRouteDisplayFields, type LngLat} from './simplify-route'
 
 export type FlightSeriesSample = {
@@ -23,10 +24,12 @@ export type VideoSegment = {startSeconds: number; endSeconds: number}
 
 export type ParsedFlightLog = {
   startedAt?: string
+  endedAt?: string
   durationSeconds: number
   distanceMeters: number
   maxHeightMeters: number
   aircraft: string
+  aircraftSerial?: string
   displayCoordinates: string
   series: string
   videoSegments: VideoSegment[]
@@ -127,7 +130,14 @@ function parseStartTime(details: DetailsLike, firstFlyTime: number, firstFrameDa
   return undefined
 }
 
-type DetailsLike = {startTime?: string; aircraftName?: string; productType?: unknown; latitude?: number; longitude?: number}
+type DetailsLike = {
+  startTime?: string
+  aircraftName?: string
+  aircraftSn?: string
+  productType?: unknown
+  latitude?: number
+  longitude?: number
+}
 
 function frameTimeSeconds(frame: Frame, startMs: number | null): number | null {
   const flyTime = frame.osd?.flyTime
@@ -301,6 +311,11 @@ export async function parseFlightLogBytes(
   }
 
   const aircraft = productLabel(details)
+  const aircraftSerial = details.aircraftSn?.trim() || undefined
+  const endedAt =
+    startedAtResolved && durationSeconds > 0
+      ? flightEndedAtIso(startedAtResolved, durationSeconds)
+      : undefined
   let home: {lat: number; lng: number} | undefined =
     details.latitude != null &&
     details.longitude != null &&
@@ -316,10 +331,12 @@ export async function parseFlightLogBytes(
 
   return {
     startedAt: startedAtResolved,
+    endedAt,
     durationSeconds: Math.round(durationSeconds),
     distanceMeters,
     maxHeightMeters: Math.round(maxHeight),
     aircraft,
+    aircraftSerial,
     displayCoordinates,
     series: JSON.stringify(seriesSamples),
     videoSegments: extractVideoSegments(frames),

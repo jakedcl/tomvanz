@@ -7,11 +7,13 @@ import type {VideoSegment} from './flight-log'
 export type ParseFlightApiResponse = {
   defaultTitle: string
   startedAt?: string
+  endedAt?: string
   place?: string
   durationSeconds: number
   distanceMeters: number
   maxHeightMeters: number
   aircraft: string
+  aircraftSerial?: string
   displayCoordinates: string
   series: string
   videoSegments: VideoSegment[]
@@ -31,11 +33,13 @@ export function flightStudioPatchFromParse(
     ...patchTitleIfEmpty(existingTitle, parsed.defaultTitle),
     includeOnMap: defaultIncludeOnMap(parsed.durationSeconds, includeOnMap),
     ...(parsed.startedAt ? {startedAt: parsed.startedAt} : {}),
+    ...(parsed.endedAt ? {endedAt: parsed.endedAt} : {}),
     ...(parsed.place ? {place: parsed.place} : {}),
     durationSeconds: parsed.durationSeconds,
     distanceMeters: parsed.distanceMeters,
     maxHeightMeters: parsed.maxHeightMeters,
     aircraft: parsed.aircraft,
+    ...(parsed.aircraftSerial ? {aircraftSerial: parsed.aircraftSerial} : {}),
     displayCoordinates: parsed.displayCoordinates,
     series: parsed.series,
     videoSegments: parsed.videoSegments,

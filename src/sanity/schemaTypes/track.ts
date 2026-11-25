@@ -88,6 +88,12 @@ export const track = defineType({
       title: 'Date',
       type: 'datetime',
     }),
+    defineField({
+      name: 'endedAt',
+      title: 'End time',
+      type: 'datetime',
+      description: 'From GPX timestamps; used to match ground photos to this route.',
+    }),
   ],
   preview: {
     select: {

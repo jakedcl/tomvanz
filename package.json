@@ -13,7 +13,8 @@
     "test": "vitest run",
     "check": "npm run lint && npm run typecheck && npm test",
     "test:droneclips": "node scripts/droneclips-browser-test.mjs",
-    "typegen": "sanity schema extract --force && sanity typegen generate"
+    "typegen": "sanity schema extract --force && sanity typegen generate",
+    "backfill:photos": "tsx scripts/backfill-photo-metadata.mjs"
   },
   "dependencies": {
     "@mediabunny/aac-encoder": "^1.66.2",
@@ -41,6 +42,7 @@
     "eslint-config-next": "16.4.6",
     "playwright": "^1.65.1",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^6",
     "vitest": "^5.1.1"
   }
