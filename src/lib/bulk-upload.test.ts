@@ -5,6 +5,7 @@ import {
   guessActivity,
   flightFromUpload,
   countsTowardBulkUpload,
+  defaultIncludeOnMap,
   isFlightLogFile,
   isGpxFile,
   isShortFlightDuration,
@@ -104,6 +105,13 @@ describe('short flight bulk upload default', () => {
     expect(countsTowardBulkUpload(undefined)).toBe(true)
     expect(countsTowardBulkUpload(true)).toBe(true)
     expect(countsTowardBulkUpload(false)).toBe(false)
+  })
+
+  it('stays off the map for short flights unless opted in (ignores video segments)', () => {
+    expect(defaultIncludeOnMap(45, false)).toBe(false)
+    expect(defaultIncludeOnMap(45, true)).toBe(true)
+    expect(defaultIncludeOnMap(45, undefined)).toBe(false)
+    expect(defaultIncludeOnMap(120, false)).toBe(true)
   })
 })
 

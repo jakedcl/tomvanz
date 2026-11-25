@@ -147,6 +147,7 @@ export type Flight = {
     _key: string;
   }>;
   sourceFilename?: string;
+  includeOnMap?: boolean;
 };
 
 export type SanityImagePaletteSwatch = {
@@ -267,7 +268,7 @@ export type AllSanitySchemaTypes =
 
 // Source: src/lib/sanity/queries.ts
 // Variable: mapQuery
-// Query: {  "name": coalesce(*[_type == "siteSettings"][0].name, "Tom Vanz"),  "tracks": *[_type == "track" && defined(route.coordinates)] | order(startedAt desc) {    _id,    title,    activity,    startedAt,    distanceMeters,    "route": {      "type": "LineString",      "coordinates": coalesce(displayCoordinates, route.coordinates)    },    photo  },  "flights": *[_type == "flight" && defined(displayCoordinates) && displayCoordinates != "[]"] | order(startedAt desc) {    _id,    title,    startedAt,    place,    durationSeconds,    distanceMeters,    maxHeightMeters,    aircraft,    "path": {      "type": "LineString",      "coordinates": displayCoordinates    }  },  "pins": *[_type == "photo" && defined(location.lat) && defined(location.lng) && defined(image.asset)] | order(_id asc) {    _id,    legacyId,    "title": coalesce(title, ""),    note,    location,    "photo": image,    "isDrone": coalesce(drone, image.asset->originalFilename match "DJI_*", false)  }}
+// Query: {  "name": coalesce(*[_type == "siteSettings"][0].name, "Tom Vanz"),  "tracks": *[_type == "track" && defined(route.coordinates)] | order(startedAt desc) {    _id,    title,    activity,    startedAt,    distanceMeters,    "route": {      "type": "LineString",      "coordinates": coalesce(displayCoordinates, route.coordinates)    },    photo  },  "flights": *[_type == "flight" && defined(displayCoordinates) && displayCoordinates != "[]" && coalesce(includeOnMap, true)] | order(startedAt desc) {    _id,    title,    startedAt,    place,    durationSeconds,    distanceMeters,    maxHeightMeters,    aircraft,    "path": {      "type": "LineString",      "coordinates": displayCoordinates    }  },  "pins": *[_type == "photo" && defined(location.lat) && defined(location.lng) && defined(image.asset)] | order(_id asc) {    _id,    legacyId,    "title": coalesce(title, ""),    note,    location,    "photo": image,    "isDrone": coalesce(drone, image.asset->originalFilename match "DJI_*", false)  }}
 export type MapQueryResult = {
   name: "Tom Vanz";
   tracks: Array<{
@@ -329,7 +330,7 @@ export type MapQueryResult = {
 // Query TypeMap
 declare global {
   interface SanityQueries {
-    '{\n  "name": coalesce(*[_type == "siteSettings"][0].name, "Tom Vanz"),\n  "tracks": *[_type == "track" && defined(route.coordinates)] | order(startedAt desc) {\n    _id,\n    title,\n    activity,\n    startedAt,\n    distanceMeters,\n    "route": {\n      "type": "LineString",\n      "coordinates": coalesce(displayCoordinates, route.coordinates)\n    },\n    photo\n  },\n  "flights": *[_type == "flight" && defined(displayCoordinates) && displayCoordinates != "[]"] | order(startedAt desc) {\n    _id,\n    title,\n    startedAt,\n    place,\n    durationSeconds,\n    distanceMeters,\n    maxHeightMeters,\n    aircraft,\n    "path": {\n      "type": "LineString",\n      "coordinates": displayCoordinates\n    }\n  },\n  "pins": *[_type == "photo" && defined(location.lat) && defined(location.lng) && defined(image.asset)] | order(_id asc) {\n    _id,\n    legacyId,\n    "title": coalesce(title, ""),\n    note,\n    location,\n    "photo": image,\n    "isDrone": coalesce(drone, image.asset->originalFilename match "DJI_*", false)\n  }\n}': MapQueryResult;
+    '{\n  "name": coalesce(*[_type == "siteSettings"][0].name, "Tom Vanz"),\n  "tracks": *[_type == "track" && defined(route.coordinates)] | order(startedAt desc) {\n    _id,\n    title,\n    activity,\n    startedAt,\n    distanceMeters,\n    "route": {\n      "type": "LineString",\n      "coordinates": coalesce(displayCoordinates, route.coordinates)\n    },\n    photo\n  },\n  "flights": *[_type == "flight" && defined(displayCoordinates) && displayCoordinates != "[]" && coalesce(includeOnMap, true)] | order(startedAt desc) {\n    _id,\n    title,\n    startedAt,\n    place,\n    durationSeconds,\n    distanceMeters,\n    maxHeightMeters,\n    aircraft,\n    "path": {\n      "type": "LineString",\n      "coordinates": displayCoordinates\n    }\n  },\n  "pins": *[_type == "photo" && defined(location.lat) && defined(location.lng) && defined(image.asset)] | order(_id asc) {\n    _id,\n    legacyId,\n    "title": coalesce(title, ""),\n    note,\n    location,\n    "photo": image,\n    "isDrone": coalesce(drone, image.asset->originalFilename match "DJI_*", false)\n  }\n}': MapQueryResult;
   }
 }
 // Lets @sanity/client releases that predate the global registry read it too

@@ -1,7 +1,10 @@
 import exifr from 'exifr'
 
 import {isFlightLogFileName, type ParsedFlightLog} from './flight-log'
+import {plausibleTime} from './plausible-time'
 import {prepareRouteDisplayFields, type LngLat} from './simplify-route'
+
+export {plausibleTime} from './plausible-time'
 
 /** What the bulk uploader pulls out of a photo file. */
 export type PhotoMeta = {
@@ -36,13 +39,6 @@ export async function readPhotoMeta(input: Blob | ArrayBuffer | Uint8Array): Pro
   const takenAt = plausibleTime(when instanceof Date ? when : when ? new Date(when) : null)
   if (takenAt) meta.takenAt = takenAt
   return meta
-}
-
-/** An ISO date-time, or nothing for obviously bogus clocks (devices that were never set report 1970 or 2000). */
-export function plausibleTime(date: Date | null | undefined): string | undefined {
-  if (!date || Number.isNaN(date.getTime())) return undefined
-  if (date.getFullYear() < 2005 || date.getTime() > Date.now() + 86_400_000) return undefined
-  return date.toISOString()
 }
 
 const PHOTO_EXTENSIONS = /\.(jpe?g|png|heic|heif|webp|tiff?)$/i
@@ -115,6 +111,15 @@ export function countsTowardBulkUpload(includeInUpload: boolean | undefined): bo
   return includeInUpload !== false
 }
 
+/** Short flights default off the map until opted in; length alone decides (not video/photo segments). */
+export function defaultIncludeOnMap(
+  durationSeconds: number | undefined | null,
+  optedIn?: boolean,
+): boolean {
+  if (!isShortFlightDuration(durationSeconds)) return true
+  return optedIn === true
+}
+
 /** A readable title from a file name: "Afternoon_Ride.gpx" becomes "Afternoon Ride". */
 export function titleFromFileName(name: string): string {
   return name
@@ -157,10 +162,12 @@ export function routeFromUpload(
 export function flightFromUpload(
   fileAssetId: string,
   parsed: ParsedFlightLog & {title: string; sourceFilename?: string},
+  includeOnMap = true,
 ) {
   return {
     _type: 'flight' as const,
     title: parsed.title.trim(),
+    includeOnMap,
     log: {_type: 'file' as const, asset: {_type: 'reference' as const, _ref: fileAssetId}},
     displayCoordinates: parsed.displayCoordinates,
     series: parsed.series,

@@ -94,7 +94,7 @@ export const photo = defineType({
       const where = lat == null ? 'No location, off the map' : undefined
       return {
         title: title || fileName || 'Photo',
-        subtitle: [where, isDrone ? 'Drone' : undefined].filter(Boolean).join(' · ') || undefined,
+        subtitle: [where, isDrone ? 'Aerial' : undefined].filter(Boolean).join(' · ') || undefined,
         media,
       }
     },

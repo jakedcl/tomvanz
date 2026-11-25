@@ -7,6 +7,7 @@ import {useRouter} from 'sanity/router'
 import {
   ACTIVITIES,
   countsTowardBulkUpload,
+  defaultIncludeOnMap,
   flightFromUpload,
   guessActivity,
   isFlightLogFile,
@@ -164,6 +165,9 @@ function routeSummary(route: NonNullable<Row['route']>) {
   if (route.startedAt) {
     parts.push(new Date(route.startedAt).toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'}))
   }
+  if (!route.startedAt && !route.endedAt) {
+    parts.push('This file has no times, so photos cannot be matched to it automatically.')
+  }
   return parts.join(' · ')
 }
 
@@ -315,12 +319,19 @@ export function BulkUploadView({
             return
           }
           const doc = await uploader.createFlight(
-            flightFromUpload(asset._id, {
-              ...row.flightParse,
-              hasGps: !row.flightParse.noMap,
-              title: row.title,
-              sourceFilename: row.name,
-            }),
+            flightFromUpload(
+              asset._id,
+              {
+                ...row.flightParse,
+                hasGps: !row.flightParse.noMap,
+                title: row.title,
+                sourceFilename: row.name,
+              },
+              defaultIncludeOnMap(
+                row.flightParse.durationSeconds,
+                countsTowardBulkUpload(row.includeInUpload),
+              ),
+            ),
           )
           let linkNote = ''
           if (row.flightParse.startedAt && row.flightParse.durationSeconds) {

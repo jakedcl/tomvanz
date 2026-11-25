@@ -25,6 +25,7 @@ export function GpxInput(props: ObjectInputProps) {
   const [message, setMessage] = useState<'idle' | 'ok' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [linkedNote, setLinkedNote] = useState<string | null>(null)
+  const [timeWarning, setTimeWarning] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const hasFile = Boolean(fileValue?.asset?._ref)
   const hasRoute = lineCoordinates(route).length >= 2
@@ -32,6 +33,7 @@ export function GpxInput(props: ObjectInputProps) {
   async function onFile(file: File) {
     setError(null)
     setLinkedNote(null)
+    setTimeWarning(null)
     try {
       const text = await file.text()
       const gpx = readGpx(text)
@@ -85,6 +87,8 @@ export function GpxInput(props: ObjectInputProps) {
           if (linkedCount > 0) {
             setLinkedNote(`Linked ${linkedCount} photo${linkedCount === 1 ? '' : 's'} to this route.`)
           }
+        } else if (!startedAt && !endedAt) {
+          setTimeWarning('This file has no times, so photos cannot be matched to it automatically.')
         }
       }
       setMessage('ok')
@@ -141,6 +145,11 @@ export function GpxInput(props: ObjectInputProps) {
         <Text size={1} muted>
           {linkedNote}
         </Text>
+      ) : null}
+      {timeWarning ? (
+        <Card padding={3} radius={2} tone="caution">
+          <Text size={1}>{timeWarning}</Text>
+        </Card>
       ) : null}
       {message === 'ok' ? (
         <Card padding={3} radius={2} tone="positive">

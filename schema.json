@@ -768,6 +768,13 @@
           "type": "string"
         },
         "optional": true
+      },
+      "includeOnMap": {
+        "type": "objectAttribute",
+        "value": {
+          "type": "boolean"
+        },
+        "optional": true
       }
     }
   },

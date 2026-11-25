@@ -67,7 +67,7 @@ export function planRoutePhotoLinks(
   const linkIds: string[] = []
 
   for (const photo of candidates) {
-    const when = effectiveTakenAt(photo.takenAt, photo.fileName)
+    const when = effectiveTakenAt(photo.takenAt, photo.fileName, photo.exifDateTimeOriginal)
     if (!when || !inWindow(when, start, end)) continue
     if (photo.lat == null || photo.lng == null) continue
     const dist = minDistanceToPolylineMeters(photo.lat, photo.lng, coordinates)

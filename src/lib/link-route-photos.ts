@@ -13,6 +13,7 @@ const CANDIDATES_QUERY = `*[_type == "photo" && !defined(route)]{
   _id,
   takenAt,
   "fileName": image.asset->originalFilename,
+  "exifDateTimeOriginal": image.asset->metadata.exif.DateTimeOriginal,
   "lat": location.lat,
   "lng": location.lng
 }`

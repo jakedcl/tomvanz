@@ -1,4 +1,4 @@
-import {effectiveTakenAt} from './photo-taken-at'
+import {effectiveTakenAt} from './photo-taken-at.ts'
 
 /** Seconds before flight start when a photo still links. */
 export const PHOTO_LINK_PADDING_BEFORE_SEC = 5
@@ -18,6 +18,7 @@ export type PhotoLinkCandidate = {
   _id: string
   takenAt?: string
   fileName?: string
+  exifDateTimeOriginal?: string
 }
 
 export type PhotoLinkPlan = {
@@ -46,7 +47,7 @@ export function planPhotoLinks(
   const unlinkedLabels: string[] = []
 
   for (const photo of candidates) {
-    const when = effectiveTakenAt(photo.takenAt, photo.fileName)
+    const when = effectiveTakenAt(photo.takenAt, photo.fileName, photo.exifDateTimeOriginal)
     if (when && inWindow(when, start, end)) {
       linkIds.push(photo._id)
       continue
