@@ -1,11 +1,11 @@
-#!/usr/bin/env node --experimental-strip-types
+#!/usr/bin/env node
 /**
  * Backfill photo metadata from original assets and propose flight/route links.
  *
- *   node --experimental-strip-types scripts/backfill-photo-metadata.mjs
- *   SANITY_TOMVANZ_WRITE_TOKEN=… node --experimental-strip-types scripts/backfill-photo-metadata.mjs --apply
+ *   npm run backfill:photos
+ *   SANITY_TOMVANZ_WRITE_TOKEN=… npm run backfill:photos -- --apply
  *
- * Dry run is the default. Never prints tokens.
+ * Downloads originals via asset url + `?dlRaw` (Bearer token from env). Dry run default. Never prints tokens.
  */
 
 import {createClient} from '@sanity/client'
@@ -18,10 +18,11 @@ const projectId = process.env.NEXT_PUBLIC_SANITY_PROJECT_ID ?? 'lee2r8sa'
 const dataset = process.env.NEXT_PUBLIC_SANITY_DATASET ?? 'production'
 const apiVersion = '2026-01-01'
 const apply = process.argv.includes('--apply')
-const writeToken =
+const token =
   process.env.SANITY_TOMVANZ_WRITE_TOKEN ??
   process.env.SANITY_API_WRITE_TOKEN ??
-  process.env.SANITY_AUTH_TOKEN
+  process.env.SANITY_AUTH_TOKEN ??
+  process.env.SANITY_API_READ_TOKEN
 
 const PHOTOS_QUERY = `*[_type == "photo" && defined(image.asset) && !(_id in path("drafts.**"))] | order(_id asc) {
   _id,
@@ -100,14 +101,16 @@ function proposedLabel(plan, flights, routes) {
 
 function verdict(row, plan, metaChanged) {
   if (row.flightId || row.routeId) {
-    const matches =
-      (plan.flightId && plan.flightId === row.flightId) ||
-      (plan.routeId && plan.routeId === row.routeId)
-    if (matches && !metaChanged) return 'agree'
-    return 'skip-manual'
+    const proposedDiffers =
+      (plan.flightId && plan.flightId !== row.flightId) ||
+      (plan.routeId && plan.routeId !== row.routeId)
+    if (proposedDiffers) return 'skip-manual'
+    if (metaChanged) return 'metadata'
+    return 'agree'
   }
   if (plan.linkReview) return 'review'
-  if (plan.flightId || plan.routeId || metaChanged) return metaChanged && !plan.flightId && !plan.routeId ? 'metadata' : 'propose'
+  if (plan.flightId || plan.routeId) return 'propose'
+  if (metaChanged) return 'metadata'
   return 'agree'
 }
 
@@ -151,8 +154,32 @@ function metaPatch(row, meta) {
   return patch
 }
 
+async function downloadOriginalBytes(assetUrl) {
+  if (!assetUrl || !token) return undefined
+  const sep = assetUrl.includes('?') ? '&' : '?'
+  const res = await fetch(`${assetUrl}${sep}dlRaw`, {
+    headers: {Authorization: `Bearer ${token}`},
+  })
+  if (!res.ok) return undefined
+  return new Uint8Array(await res.arrayBuffer())
+}
+
+function linkPatch(row, plan) {
+  const patch = {}
+  if (!row.flightId && plan.flightId) patch.flight = {_type: 'reference', _ref: plan.flightId}
+  if (!row.routeId && plan.routeId) patch.route = {_type: 'reference', _ref: plan.routeId}
+  if (!row.flightId && !row.routeId && plan.linkReview) patch.linkReview = plan.linkReview
+  return patch
+}
+
 async function main() {
-  if (!writeToken && apply) {
+  if (!token) {
+    console.error(
+      'Set SANITY_API_READ_TOKEN or SANITY_TOMVANZ_WRITE_TOKEN to download originals and query the dataset.',
+    )
+    process.exit(1)
+  }
+  if (apply && !(process.env.SANITY_TOMVANZ_WRITE_TOKEN ?? process.env.SANITY_API_WRITE_TOKEN)) {
     console.error('Set SANITY_TOMVANZ_WRITE_TOKEN (or SANITY_API_WRITE_TOKEN) to apply patches.')
     process.exit(1)
   }
@@ -162,7 +189,7 @@ async function main() {
     dataset,
     apiVersion,
     useCdn: false,
-    token: writeToken,
+    token,
   })
 
   const [photos, flightsRaw, routesRaw] = await Promise.all([
@@ -181,16 +208,11 @@ async function main() {
 
   for (const row of photos) {
     let meta = {}
-    if (row.assetUrl) {
-      try {
-        const res = await fetch(row.assetUrl)
-        if (res.ok) {
-          const buf = new Uint8Array(await res.arrayBuffer())
-          meta = await readPhotoMetaWithAltitude(buf, row.fileName)
-        }
-      } catch {
-        // skip download/parse errors
-      }
+    try {
+      const buf = await downloadOriginalBytes(row.assetUrl)
+      if (buf) meta = await readPhotoMetaWithAltitude(buf, row.fileName)
+    } catch {
+      // skip download/parse errors
     }
 
     const lat = row.lat ?? meta.lat
@@ -216,12 +238,9 @@ async function main() {
         ? {}
         : planSinglePhotoLinks(candidate, flights, routes)
 
-    const patch = metaPatch(row, meta)
-    const metaChanged = Object.keys(patch).length > 0
-
-    if (!row.flightId && plan.flightId) patch.flight = {_type: 'reference', _ref: plan.flightId}
-    if (!row.routeId && plan.routeId) patch.route = {_type: 'reference', _ref: plan.routeId}
-    if (plan.linkReview) patch.linkReview = plan.linkReview
+    const metadataPatch = metaPatch(row, meta)
+    const metaChanged = Object.keys(metadataPatch).length > 0
+    const linksPatch = linkPatch(row, plan)
 
     const v = verdict(row, plan, metaChanged)
     const proposed = proposedLabel(plan, flights, routes)
@@ -230,10 +249,13 @@ async function main() {
       `${row._id}\t${title || '—'}\t${model}\t${formatEt(takenAt)}\t${currentLink(row)}\t${proposed}\t${v}`,
     )
 
-    if (!apply || v === 'skip-manual') continue
-    if (Object.keys(patch).length === 0) continue
+    if (!apply) continue
 
-    await client.patch(row._id).set(patch).commit()
+    const applyPatch = {...metadataPatch}
+    if (v !== 'skip-manual') Object.assign(applyPatch, linksPatch)
+    if (Object.keys(applyPatch).length === 0) continue
+
+    await client.patch(row._id).set(applyPatch).commit()
     applyCount += 1
   }
 
