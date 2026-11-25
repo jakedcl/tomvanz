@@ -5,6 +5,8 @@ import {useCallback, useEffect, useRef, useState} from 'react'
 import type {FlightSeriesSample} from '@/lib/flight-log'
 import {formatDurationSeconds} from '@/lib/format-duration'
 import {formatFeet} from '@/lib/elevation'
+import type {ReplayController} from '@/lib/flyover/replay-controller'
+import {useReplayCursor} from './ReplayControls'
 
 type Props = {
   flightId: string
@@ -13,6 +15,8 @@ type Props = {
   onScrub: (sample: FlightSeriesSample | null) => void
   /** When the parent already fetched series, skip a second request. */
   series?: FlightSeriesSample[] | null
+  /** The replay of this flight: its position is drawn as a cursor, and its moment fills the readout. */
+  replay?: ReplayController
 }
 
 const W = 300
@@ -22,7 +26,8 @@ function metersToFeet(m: number) {
   return m * 3.28084
 }
 
-export function FlightAltitudeChart({flightId, durationSeconds, onScrub, series}: Props) {
+export function FlightAltitudeChart({flightId, durationSeconds, onScrub, series, replay}: Props) {
+  const replayFrame = useReplayCursor(replay)
   const [fetched, setFetched] = useState<FlightSeriesSample[] | null>(null)
   const [done, setDone] = useState(series !== undefined)
   const samples = series !== undefined ? series : fetched
@@ -95,10 +100,15 @@ export function FlightAltitudeChart({flightId, durationSeconds, onScrub, series}
   const footerDuration =
     formatDurationSeconds(durationSeconds ?? tSpan) ?? formatElapsed(tSpan)
 
+  // The pointer wins while it's on the chart; otherwise the replay's moment is shown.
+  const replayT = replayFrame ? tMin + replayFrame.t : null
+  const shown = active ?? (replayT != null ? nearestSample(samples, replayT) : null)
+  const cursorT = active ? active.t : replayT
+
   return (
     <div>
-      {active ? (
-        <MotionReadout sample={active} elapsedSeconds={active.t - tMin} formatDuration={formatElapsed} />
+      {shown ? (
+        <MotionReadout sample={shown} elapsedSeconds={shown.t - tMin} formatDuration={formatElapsed} />
       ) : null}
       <svg
         ref={svgRef}
@@ -122,10 +132,10 @@ export function FlightAltitudeChart({flightId, durationSeconds, onScrub, series}
         }}
       >
         <polyline points={line} fill="none" stroke="#d97706" strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-        {active ? (
+        {cursorT != null ? (
           <line
-            x1={((active.t - tMin) / tSpan) * W}
-            x2={((active.t - tMin) / tSpan) * W}
+            x1={((cursorT - tMin) / tSpan) * W}
+            x2={((cursorT - tMin) / tSpan) * W}
             y1={0}
             y2={H}
             stroke="#000"
@@ -140,6 +150,19 @@ export function FlightAltitudeChart({flightId, durationSeconds, onScrub, series}
       </p>
     </div>
   )
+}
+
+function nearestSample(samples: FlightSeriesSample[], t: number): FlightSeriesSample {
+  let best = samples[0]!
+  let bestDist = Math.abs(best.t - t)
+  for (const s of samples) {
+    const d = Math.abs(s.t - t)
+    if (d < bestDist) {
+      best = s
+      bestDist = d
+    }
+  }
+  return best
 }
 
 function MotionReadout({
