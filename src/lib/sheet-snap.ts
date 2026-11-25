@@ -100,3 +100,30 @@ export function estimateVelocity(samples: {y: number; t: number}[], windowMs = 1
 export function listGestureOwner(params: {scrollTop: number; dy: number}): 'list' | 'sheet' {
   return params.scrollTop <= 0 && params.dy > 0 ? 'sheet' : 'list'
 }
+
+/** A keyboard is at least this tall (pixels); smaller changes in the visible height are browser bars, not a keyboard. */
+export const KEYBOARD_MIN_PX = 120
+
+/**
+ * Where the sheet goes while the on-screen keyboard is open: it rises to sit just above the keyboard and grows to
+ * fill all the room above it, so the search bar is at the very top of what the person can see and as many results
+ * as possible are showing. Comes from the page's visual viewport (the part of the page not covered by the keyboard).
+ */
+export function keyboardLayout(params: {
+  /** Height of the whole page area (window.innerHeight). */
+  layoutHeight: number
+  /** Height of what is actually visible (visualViewport.height). */
+  viewportHeight: number
+  /** How far the visible part has been scrolled down from the top (visualViewport.offsetTop). */
+  viewportOffsetTop: number
+  /** Height of the box the sheet sits in. */
+  containerHeight: number
+}): {open: boolean; bottom: number; height: number} {
+  const covered = Math.max(0, params.layoutHeight - params.viewportHeight - params.viewportOffsetTop)
+  if (covered < KEYBOARD_MIN_PX) return {open: false, bottom: 0, height: 0}
+  return {
+    open: true,
+    bottom: covered,
+    height: Math.max(PEEK_CONTENT_PX, Math.min(params.viewportHeight - 4, params.containerHeight - covered)),
+  }
+}
