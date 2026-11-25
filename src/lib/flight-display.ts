@@ -1,15 +1,44 @@
 import type {FlightSeriesSample} from './flight-log'
 
-/** Map raw DJI / parser mode strings to a short flight-card pill. */
+/** Collapse `GPS Atti` / `P-GPS` / `GPSAtti` to one token for lookup. */
+function flycStateKey(mode: string): string {
+  return mode
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/_/g, '')
+    .toLowerCase()
+}
+
+const IGNORED_FLYC = new Set([
+  'landing',
+  'takeoff',
+  'gohome',
+  'autotakeoff',
+  'autolanding',
+])
+
+/** Map raw DJI `osd.flycState` to the label on the flight card pill. */
 export function flightModePillLabel(mode: string): string | null {
   const raw = mode.trim()
   if (!raw) return null
-  const m = raw.toLowerCase()
-  if (m.includes('sport') || m === 's-mode' || m === 's_mode') return 'Sport mode'
-  if (m.includes('cine') || m.includes('cinematic')) return 'Cinematic mode'
-  if (m.includes('tripod') || m.includes('easy') || m.includes('beginner')) return 'Normal mode'
-  if (m.includes('normal') || m.includes('p-gps') || m.includes('patti') || m.includes('gps')) return 'Normal mode'
-  if (m.includes('manual')) return 'Sport mode'
+  const key = flycStateKey(raw)
+  if (IGNORED_FLYC.has(key)) return null
+
+  if (key === 'gpsatti' || key === 'gpsnormal' || key === 'p-gps' || key === 'pgps') return 'Normal mode'
+  if (key === 'gpssport' || key === 'sport') return 'Sport mode'
+  if (
+    key === 'tripod' ||
+    key === 'gpstripod' ||
+    key === 'cine' ||
+    key === 'gpscine' ||
+    key === 'gpsgentle' ||
+    key.startsWith('cine')
+  ) {
+    return 'Cinematic mode'
+  }
+  if (key === 'atti') return 'Atti mode'
+  if (key === 'manual') return 'Manual mode'
+
   return null
 }
 
