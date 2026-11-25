@@ -7,8 +7,7 @@ import {MapDetailPanel} from './MapDetailPanel'
 import {ThreeDButton} from './ThreeDButton'
 import {MapSearch} from './MapSearch'
 import {PileStrip} from './PileStrip'
-import type {FlightSeriesSample} from '@/lib/flight-log'
-import type {RouteScrubPoint} from '@/lib/elevation'
+import {ReplayController} from '@/lib/flyover/replay-controller'
 import {trackMiles} from '@/lib/track-mileage'
 import {
   applyMapFilters,
@@ -62,15 +61,19 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
   const [hint, setHint] = useState<'touch' | 'mouse' | null>(null)
   const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [panelHeight, setPanelHeight] = useState(0)
-  const flightScrubRef = useRef<((sample: FlightSeriesSample | null) => void) | null>(null)
-  const routeScrubRef = useRef<((point: RouteScrubPoint | null) => void) | null>(null)
   const onPanelHeight = useCallback((height: number) => setPanelHeight(height), [])
-  const registerFlightScrub = useCallback((handler: (sample: FlightSeriesSample | null) => void) => {
-    flightScrubRef.current = handler
-  }, [])
-  const registerRouteScrub = useCallback((handler: (point: RouteScrubPoint | null) => void) => {
-    routeScrubRef.current = handler
-  }, [])
+  // The replay of the open flight or route. The panel's controls and charts drive it; the map draws it.
+  const [replay] = useState(() => new ReplayController())
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const update = () => replay.setReducedMotion(query.matches)
+    update()
+    query.addEventListener('change', update)
+    return () => {
+      query.removeEventListener('change', update)
+      replay.load(null)
+    }
+  }, [replay])
 
   useEffect(() => () => {
     if (hintTimer.current) clearTimeout(hintTimer.current)
@@ -166,8 +169,7 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
           pileMembers={pileMembers}
           onMapError={() => setMapFailed(true)}
           panelHeight={stripOpen ? panelHeight : 0}
-          onRegisterFlightScrub={registerFlightScrub}
-          onRegisterRouteScrub={registerRouteScrub}
+          replay={replay}
         />
       )}
       {!mapFailed ? (
@@ -238,8 +240,19 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
             data={data}
             selected={card!}
             onClose={() => select(null)}
-            onFlightScrub={(sample) => flightScrubRef.current?.(sample)}
-            onRouteScrub={(point) => routeScrubRef.current?.(point)}
+            replay={replay}
+            // Dragging along a profile moves the replay marker there (and pauses it).
+            onFlightScrub={(sample) => {
+              if (sample) replay.seekSeconds(sample.t - (replay.getTrack()?.sourceT0 ?? 0))
+            }}
+            onRouteScrub={(point) => {
+              if (point) replay.seekFraction(point.fraction)
+            }}
+            // The flyover needs the terrain on, so playing switches 3D on (no how-to hint: they're watching).
+            onPlay={() => {
+              if (!threeD) startThreeDFromGesture()
+              replay.play()
+            }}
             onOpenPhoto={(id) => select({kind: 'pin', id})}
           />
         </MapDetailPanel>

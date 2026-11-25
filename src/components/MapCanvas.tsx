@@ -15,8 +15,8 @@ import {
 } from '@/lib/map-bunch'
 import {FLIGHT_PATH_COLOR} from '@/lib/flight-color'
 import {trackColor} from '@/lib/track-color'
-import type {FlightSeriesSample} from '@/lib/flight-log'
-import type {RouteScrubPoint} from '@/lib/elevation'
+import type {ReplayController, ReplayFrame} from '@/lib/flyover/replay-controller'
+import {createFlyover, type FlyoverHandle} from './flyover/flyover-map'
 import {PhotoMapPopupCard} from './InfoCard'
 import {lineCoordinates, type MapData, SelectedItem} from '@/lib/sanity/types'
 import type {StyleSpecification} from 'maplibre-gl'
@@ -62,8 +62,8 @@ type Props = {
   onMapError: () => void
   /** Height of the bottom detail panel so routes fit above it. */
   panelHeight?: number
-  onRegisterFlightScrub?: (handler: (sample: FlightSeriesSample | null) => void) => void
-  onRegisterRouteScrub?: (handler: (point: RouteScrubPoint | null) => void) => void
+  /** The replay of the open flight or route: the marker and the follow camera come from it. */
+  replay: ReplayController
 }
 
 /** Marker for a photo that has no picture to show as a thumbnail. */
@@ -244,14 +244,15 @@ export function MapCanvas({
   onMapError,
   panelHeight = 0,
   pileMembers = null,
-  onRegisterFlightScrub,
-  onRegisterRouteScrub,
+  replay,
 }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const markersRef = useRef<Map<string, Marker>>(new Map())
-  const flightScrubRef = useRef<Marker | null>(null)
-  const routeScrubRef = useRef<Marker | null>(null)
+  /** The replay marker drawn as a plain page element, used only if the 3D layer can't be (no WebGL2, failed to load). */
+  const fallbackMarkerRef = useRef<Marker | null>(null)
+  const flyoverRef = useRef<FlyoverHandle | null>(null)
+  const replayRef = useRef(replay)
   const onSelectRef = useRef(onSelect)
   const onPileRef = useRef(onPile)
   const onThreeDGestureRef = useRef(onThreeDGesture)
@@ -278,7 +279,8 @@ export function MapCanvas({
     onMapErrorRef.current = onMapError
     dataRef.current = data
     threeDRef.current = threeD
-  }, [selected, onSelect, onPile, onThreeDGesture, onMapError, data, threeD])
+    replayRef.current = replay
+  }, [selected, onSelect, onPile, onThreeDGesture, onMapError, data, threeD, replay])
 
   const pinCtx = (): PinRenderCtx => ({
     data: dataRef.current,
@@ -287,57 +289,34 @@ export function MapCanvas({
     getActiveId: () => activeIdRef.current,
   })
 
-  const onFlightScrub = useCallback((sample: FlightSeriesSample | null) => {
-    const map = mapRef.current
-    if (!map || !readyRef.current) return
-    if (!sample) {
-      flightScrubRef.current?.remove()
-      flightScrubRef.current = null
-      return
-    }
-    if (!flightScrubRef.current) {
-      const el = flightScrubMarkerEl(sample.heading)
-      flightScrubRef.current = new Marker({element: el, anchor: 'center'}).setLngLat([sample.lng, sample.lat]).addTo(map)
-      return
-    }
-    flightScrubRef.current.setLngLat([sample.lng, sample.lat])
-    flightScrubRef.current.getElement().innerHTML = flightScrubMarkerEl(sample.heading).innerHTML
-  }, [])
-
-  const onRouteScrub = useCallback((point: RouteScrubPoint | null) => {
-    const map = mapRef.current
-    if (!map || !readyRef.current) return
-    if (!point) {
-      routeScrubRef.current?.remove()
-      routeScrubRef.current = null
-      return
-    }
-    const color =
-      selectedRef.current?.kind === 'track'
-        ? trackColor(dataRef.current.tracks.find((t) => t._id === selectedRef.current?.id)?.activity ?? 'other')
-        : '#2563eb'
-    if (!routeScrubRef.current) {
-      routeScrubRef.current = new Marker({element: routeScrubMarkerEl(color), anchor: 'center'})
-        .setLngLat([point.lng, point.lat])
-        .addTo(map)
-      return
-    }
-    routeScrubRef.current.setLngLat([point.lng, point.lat])
-  }, [])
+  const fallbackMarker = useCallback(
+    (): {show: (frame: ReplayFrame) => void; hide: () => void} => ({
+      show: (frame) => {
+        const map = mapRef.current
+        if (!map || !readyRef.current) return
+        if (!fallbackMarkerRef.current) {
+          const color =
+            frame.kind === 'route'
+              ? trackColor(dataRef.current.tracks.find((t) => t._id === selectedRef.current?.id)?.activity ?? 'other')
+              : '#2563eb'
+          const el = frame.kind === 'flight' ? flightScrubMarkerEl(frame.course) : routeScrubMarkerEl(color)
+          fallbackMarkerRef.current = new Marker({element: el, anchor: 'center'}).setLngLat([frame.lng, frame.lat]).addTo(map)
+          return
+        }
+        fallbackMarkerRef.current.setLngLat([frame.lng, frame.lat])
+        if (frame.kind === 'flight') fallbackMarkerRef.current.getElement().innerHTML = flightScrubMarkerEl(frame.course).innerHTML
+      },
+      hide: () => {
+        fallbackMarkerRef.current?.remove()
+        fallbackMarkerRef.current = null
+      },
+    }),
+    [],
+  )
 
   useEffect(() => {
-    onRegisterFlightScrub?.(onFlightScrub)
-  }, [onFlightScrub, onRegisterFlightScrub])
-
-  useEffect(() => {
-    onRegisterRouteScrub?.(onRouteScrub)
-  }, [onRouteScrub, onRegisterRouteScrub])
-
-  useEffect(() => {
-    flightScrubRef.current?.remove()
-    flightScrubRef.current = null
-    routeScrubRef.current?.remove()
-    routeScrubRef.current = null
+    fallbackMarkerRef.current?.remove()
+    fallbackMarkerRef.current = null
   }, [selected?.id, selected?.kind])
 
   useEffect(() => {
@@ -366,6 +345,12 @@ export function MapCanvas({
       onMapErrorRef.current()
     })
     map.on('click', (event) => {
+      // A floating flight tube is picked by where it appears on screen (it isn't on the ground under it).
+      const tubeId = flyoverRef.current?.pickFlight(event.point.x, event.point.y)
+      if (tubeId) {
+        onSelectRef.current({kind: 'flight', id: tubeId, lng: event.lngLat.lng, lat: event.lngLat.lat, fly: true})
+        return
+      }
       const layers = hitLayerIds(map)
       if (layers.length) {
         const hit = map.queryRenderedFeatures(event.point, {layers})[0]
@@ -393,6 +378,10 @@ export function MapCanvas({
       onSelectRef.current(null)
     })
     map.on('mousemove', (event) => {
+      if (flyoverRef.current?.pickFlight(event.point.x, event.point.y)) {
+        map.getCanvas().style.cursor = 'pointer'
+        return
+      }
       const layers = hitLayerIds(map)
       if (!layers.length) {
         map.getCanvas().style.cursor = ''
@@ -403,6 +392,13 @@ export function MapCanvas({
     })
     map.on('load', () => {
       readyRef.current = true
+      flyoverRef.current = createFlyover(map, {
+        getData: () => dataRef.current,
+        getSelected: () => selectedRef.current,
+        isThreeD: () => threeDRef.current,
+        replay: replayRef.current,
+        fallbackMarker: fallbackMarker(),
+      })
       // The first draw fits everything in view; later redraws (search, filters) leave the camera alone.
       syncMap(map, dataRef.current, pinCtx(), markersRef, true)
       if (selectedRef.current) {
@@ -425,13 +421,15 @@ export function MapCanvas({
     })
 
     return () => {
+      flyoverRef.current?.dispose()
+      flyoverRef.current = null
       markersRef.current.forEach((marker) => marker.remove())
       markersRef.current = new Map()
       readyRef.current = false
       map.remove()
       mapRef.current = null
     }
-  }, [])
+  }, [fallbackMarker])
 
   const firstThreeD = useRef(true)
   useEffect(() => {
@@ -444,12 +442,14 @@ export function MapCanvas({
     const tilt = !gestureEnabledRef.current
     gestureEnabledRef.current = false
     applyThreeD(map, threeD, tilt)
+    flyoverRef.current?.sync()
   }, [threeD])
 
   useEffect(() => {
     const map = mapRef.current
     if (!map || !readyRef.current) return
     syncMap(map, data, pinCtx(), markersRef, false)
+    flyoverRef.current?.sync()
   }, [data])
 
   useEffect(() => {
@@ -476,6 +476,7 @@ export function MapCanvas({
         map.setPaintProperty(layer.id, 'line-width', on ? 4.5 : 2.5)
       }
     }
+    flyoverRef.current?.sync()
   }, [selected, data])
 
   useEffect(() => {

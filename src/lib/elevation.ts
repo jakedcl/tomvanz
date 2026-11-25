@@ -28,6 +28,8 @@ export type RouteScrubPoint = {
   lat: number
   miles: number
   feet: number
+  /** How far along the whole route this is, 0 to 1. */
+  fraction: number
 }
 
 type Tile = {data: Uint8ClampedArray; size: number}

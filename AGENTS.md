@@ -32,7 +32,8 @@ Sanity project and dataset come from `NEXT_PUBLIC_SANITY_PROJECT_ID` and `NEXT_P
 - **Flight** documents store the original DJI `.txt` log, simplified `displayCoordinates` for the map (same JSON encoding as routes), and hidden `series` telemetry JSON for the altitude chart (~1 Hz: `t,lng,lat,height,speed,heading,gimbalPitch,battery,mode`). Distance is always from the decoded GPS track, never the log header. `series` is not in `mapQuery`; the card loads it from `/api/flight/[id]`. See field docs in `src/sanity/schemaTypes/flight.ts`.
 - Drone photos are detected from `DJI_*` file names (`src/lib/drone.ts`), with a manual override switch in the Studio.
 - Studio tools: **Bulk upload** accepts photos, GPX routes, and DJI flight logs (`FlightRecord_*.txt` / `DJIFlightRecord_*.txt`). Flight logs are parsed via `POST /api/parse-flight` (multipart file, no Sanity asset until Upload) while rows are prepared; the log file uploads on confirm like GPX. Requires a signed-in Studio user; v13+ logs need `DJI_API_KEY` on the server only — never `NEXT_PUBLIC_` or client code. Photos link via `takenAt` or DJI filename timestamps (±5s / +15s window).
-- Track colors come from the activity field: bike blue, hike green. Flight paths use one accent color (`src/lib/flight-color.ts`).
+- Track colors come from the activity field: bike blue, hike green.
+- 3D flyover: with the map tilted past 20° and terrain on, flights draw as tubes floating at their real altitude (a three.js custom layer, `src/components/flyover/`, loaded on demand; altitude = terrain at takeoff + exaggeration × height above takeoff, never under the ground). Tracks come thinned from `/api/flights/tracks`. The replay (`src/lib/flyover/replay-controller.ts`) drives the marker, the follow camera and the profile cursors; the 2D lines are untouched. Flight paths use one accent color (`src/lib/flight-color.ts`).
 
 ## Repo facts
 
