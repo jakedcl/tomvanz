@@ -1,6 +1,6 @@
 'use client'
 
-import {useState} from 'react'
+import {useEffect, useRef, useState} from 'react'
 import {CloseIcon} from './CloseIcon'
 import {PhotoShape} from './shapes'
 import {sanityImageAlt, urlFor} from '@/lib/sanity/image'
@@ -10,41 +10,30 @@ import {trackColor} from '@/lib/track-color'
 import {
   activeFilterCount,
   emptyMapFilters,
-  filterSubRows,
+  pillBlockedBy,
+  toggleAircraft,
+  toggleGroup,
+  toggleKind,
+  type FilterOptions,
   type MapFilterState,
+  type PhotoKind,
   type ResultItem,
-  type TypeOption,
+  type RouteKind,
 } from '@/lib/map-filters'
 import {formatMapDate} from '@/lib/format-map-date'
-
-type FilterGroups = {
-  groups: TypeOption[]
-  routeKinds: TypeOption[]
-  aircraftChips: TypeOption[]
-  hasDrone: boolean
-  routesExtras: TypeOption[]
-}
 
 type Props = {
   state: MapFilterState
   onChange: (next: MapFilterState) => void
-  filterGroups: FilterGroups
+  filterGroups: FilterOptions
   results: ResultItem[]
   total: number
   onPick: (item: ResultItem) => void
 }
 
 export function MapSearch({state, onChange, filterGroups, results, total, onPick}: Props) {
-  const {groups, routeKinds, aircraftChips, hasDrone, routesExtras} = filterGroups
-  const subRows = filterSubRows(state, filterGroups)
   const [open, setOpen] = useState(false)
   const count = activeFilterCount(state)
-
-  const toggleType = (value: string) =>
-    onChange({
-      ...state,
-      types: state.types.includes(value) ? state.types.filter((t) => t !== value) : [...state.types, value],
-    })
 
   return (
     <>
@@ -91,53 +80,7 @@ export function MapSearch({state, onChange, filterGroups, results, total, onPick
           </div>
 
           <div className="space-y-2 px-4 pb-3">
-            {groups.length > 0 ? (
-              <Chips>
-                {groups.map((option) => (
-                  <Chip
-                    key={option.value}
-                    active={state.types.includes(option.value)}
-                    onClick={() => toggleType(option.value)}
-                  >
-                    {option.label}
-                  </Chip>
-                ))}
-              </Chips>
-            ) : null}
-            {subRows.map((row) => (
-              <div key={row.parent} className="space-y-1">
-                <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-black/40">{row.label}</p>
-                <Chips>
-                  {row.parent === 'photos' && hasDrone ? (
-                    <Chip active={state.drone} onClick={() => onChange({...state, drone: !state.drone})}>
-                      Aerial
-                    </Chip>
-                  ) : null}
-                  {row.parent === 'routes'
-                    ? [...routeKinds, ...routesExtras].map((option) => (
-                        <Chip
-                          key={option.value}
-                          active={state.types.includes(option.value)}
-                          onClick={() => toggleType(option.value)}
-                        >
-                          {option.label}
-                        </Chip>
-                      ))
-                    : null}
-                  {row.parent === 'flights'
-                    ? aircraftChips.map((option) => (
-                        <Chip
-                          key={option.value}
-                          active={state.types.includes(option.value)}
-                          onClick={() => toggleType(option.value)}
-                        >
-                          {option.label}
-                        </Chip>
-                      ))
-                    : null}
-                </Chips>
-              </div>
-            ))}
+            <PillRow state={state} options={filterGroups} onChange={onChange} />
             <div className="flex items-center justify-between gap-2 pt-0.5">
               <span />
               {count > 0 ? (
@@ -249,19 +192,170 @@ function ResultThumb({item}: {item: ResultItem}) {
   )
 }
 
-function Chips({children}: {children: React.ReactNode}) {
-  return <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{children}</div>
+/**
+ * One row of pills. A sub-pill appears right after the pill it belongs to (Aerial and Ground after Photos; bike,
+ * hike, other and flights after Routes; drone models after Flights), pushing the rest to the right. A pill from
+ * the other world than the one chosen is greyed out and can't be pressed. If the row is wider than the panel
+ * it scrolls sideways, with a soft fade at an edge that has more.
+ */
+function PillRow({
+  state,
+  options,
+  onChange,
+}: {
+  state: MapFilterState
+  options: FilterOptions
+  onChange: (next: MapFilterState) => void
+}) {
+  const scroller = useRef<HTMLDivElement | null>(null)
+  const [edges, setEdges] = useState({left: false, right: false})
+
+  const measure = () => {
+    const el = scroller.current
+    if (!el) return
+    const left = el.scrollLeft > 4
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 4
+    setEdges((current) => (current.left === left && current.right === right ? current : {left, right}))
+  }
+
+  // Re-measure when the pills or the panel change size.
+  useEffect(() => {
+    const el = scroller.current
+    if (!el) return
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    if (el.firstElementChild) observer.observe(el.firstElementChild)
+    return () => observer.disconnect()
+  }, [])
+
+  // A mouse wheel scrolls the row sideways (the row never scrolls up and down anyway).
+  useEffect(() => {
+    const el = scroller.current
+    if (!el) return
+    const onWheel = (event: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
+      event.preventDefault()
+      el.scrollLeft += event.deltaY
+    }
+    el.addEventListener('wheel', onWheel, {passive: false})
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  // When a group opens, bring it (and its new pills) into view.
+  const hasFlights = state.routes && state.routeKinds.includes('flights')
+  useEffect(() => {
+    const open = [state.photos && 'photos', state.routes && 'routes', hasFlights && 'flights'].filter(Boolean)
+    const last = open[open.length - 1]
+    if (!last) return
+    scroller.current
+      ?.querySelector(`[data-group="${last}"]`)
+      ?.scrollIntoView({behavior: 'smooth', inline: 'nearest', block: 'nearest'})
+  }, [state.photos, state.routes, hasFlights])
+
+  const fade = `linear-gradient(to right, ${edges.left ? 'transparent, black 28px' : 'black, black'}, ${
+    edges.right ? 'black calc(100% - 28px), transparent' : 'black, black'
+  })`
+
+  const subPill = (kind: PhotoKind | RouteKind, label: string) => {
+    const chosen = ((state.photoKinds as string[]).includes(kind) || (state.routeKinds as string[]).includes(kind))
+    const blockedBy = chosen ? null : pillBlockedBy(state, kind)
+    return (
+      <Chip
+        key={kind}
+        sub
+        active={chosen}
+        disabled={blockedBy !== null}
+        title={blockedBy ? `Not available with ${blockedBy}` : undefined}
+        onClick={() => onChange(toggleKind(state, kind))}
+      >
+        {label}
+      </Chip>
+    )
+  }
+
+  return (
+    <div
+      ref={scroller}
+      onScroll={measure}
+      className="-mx-4 overflow-x-auto px-4 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      style={{maskImage: fade, WebkitMaskImage: fade}}
+    >
+      <div className="flex w-max items-center gap-1.5">
+        {options.hasPhotos ? (
+          <div data-group="photos" className="flex items-center gap-1.5">
+            <Chip active={state.photos} onClick={() => onChange(toggleGroup(state, 'photos'))}>
+              Photos
+            </Chip>
+            {state.photos ? options.photoKinds.map((pill) => subPill(pill.kind, pill.label)) : null}
+          </div>
+        ) : null}
+        {options.hasRoutes ? (
+          <div data-group="routes" className="flex items-center gap-1.5">
+            <Chip active={state.routes} onClick={() => onChange(toggleGroup(state, 'routes'))}>
+              Routes
+            </Chip>
+            {state.routes
+              ? options.routeKinds.map((pill) =>
+                  pill.kind === 'flights' ? (
+                    <div key="flights" data-group="flights" className="flex items-center gap-1.5">
+                      {subPill(pill.kind, pill.label)}
+                      {hasFlights
+                        ? options.aircraft.map((model) => (
+                            <Chip
+                              key={model.value}
+                              sub
+                              active={state.aircraft.includes(model.value)}
+                              onClick={() => onChange(toggleAircraft(state, model.value))}
+                            >
+                              {model.label}
+                            </Chip>
+                          ))
+                        : null}
+                    </div>
+                  ) : (
+                    subPill(pill.kind, pill.label)
+                  ),
+                )
+              : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
 }
 
-function Chip({active, onClick, children}: {active: boolean; onClick: () => void; children: React.ReactNode}) {
+function Chip({
+  active,
+  onClick,
+  children,
+  sub = false,
+  disabled = false,
+  title,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+  /** A sub-pill: a little smaller, outlined when off. */
+  sub?: boolean
+  disabled?: boolean
+  title?: string
+}) {
+  const look = active
+    ? 'bg-black text-white'
+    : sub
+      ? 'bg-white text-black/70 ring-1 ring-inset ring-black/15'
+      : 'bg-black/[0.06] text-black/70'
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`shrink-0 rounded-full px-3 py-1.5 text-[13px] font-medium ${
-        active ? 'bg-black text-white' : 'bg-black/[0.06] text-black/70'
-      }`}
+      disabled={disabled}
+      title={title}
+      className={`shrink-0 whitespace-nowrap rounded-full font-medium ${
+        sub ? 'px-2.5 py-1 text-[12px]' : 'px-3 py-1.5 text-[13px]'
+      } ${look} ${disabled ? 'cursor-not-allowed opacity-35' : ''}`}
     >
       {children}
     </button>

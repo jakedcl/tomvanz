@@ -34,6 +34,7 @@ Sanity project and dataset come from `NEXT_PUBLIC_SANITY_PROJECT_ID` and `NEXT_P
 - Studio tools: **Bulk upload** accepts photos, GPX routes, and DJI flight logs (`FlightRecord_*.txt` / `DJIFlightRecord_*.txt`). Flight logs are parsed via `POST /api/parse-flight` (multipart file, no Sanity asset until Upload) while rows are prepared; the log file uploads on confirm like GPX. Requires a signed-in Studio user; v13+ logs need `DJI_API_KEY` on the server only — never `NEXT_PUBLIC_` or client code. Photos link via `takenAt` or DJI filename timestamps (±5s / +15s window).
 - Track colors come from the activity field: bike blue, hike green.
 - 3D flyover: with the map tilted past 20° and terrain on, flights draw as tubes floating at their real altitude (a three.js custom layer, `src/components/flyover/`, loaded on demand; altitude = terrain at takeoff + exaggeration × height above takeoff, never under the ground). Tracks come thinned from `/api/flights/tracks`. The replay (`src/lib/flyover/replay-controller.ts`) drives the marker, the follow camera and the profile cursors; the 2D lines are untouched. Flight paths use one accent color (`src/lib/flight-color.ts`).
+- Map filters (`src/lib/map-filters.ts`): every pill belongs to the ground world (Ground photos, bike, hike, other) or the aerial world (Aerial photos, Flights). Once one is chosen the other world's pills are greyed out, and the world also limits the photos shown. Change filters only through `toggleGroup` / `toggleKind` / `toggleAircraft` so that stays true.
 
 ## Repo facts
 
