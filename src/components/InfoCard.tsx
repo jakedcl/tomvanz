@@ -37,6 +37,8 @@ type Props = {
   replay?: ReplayController
   /** Starts the replay (the map also switches 3D on). */
   onPlay?: () => void
+  /** `panel`: shown inside the sidebar or the sheet (no floating-card frame or close button; the panel has a back control). */
+  variant?: 'card' | 'panel'
 }
 
 type LinkedPhoto = {_id: string; title?: string; photo?: {asset?: {_ref: string}}}
@@ -311,7 +313,7 @@ export function PhotoMapPopupCard({data, selected, onClose}: Props) {
   )
 }
 
-export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, onOpenPhoto, replay, onPlay}: Props) {
+export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, onOpenPhoto, replay, onPlay, variant = 'card'}: Props) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const [linkedPhotos, setLinkedPhotos] = useState<LinkedPhoto[]>([])
@@ -406,7 +408,9 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, 
   }
 
   const frame =
-    'tv-card tv-sheet w-full overflow-x-hidden rounded-t-[18px] bg-white shadow-[0_-6px_28px_rgba(0,0,0,0.18)] ring-1 ring-black/5 md:rounded-[18px] md:shadow-[0_16px_48px_rgba(0,0,0,0.22)]'
+    variant === 'panel'
+      ? 'w-full overflow-x-hidden bg-white'
+      : 'tv-card tv-sheet w-full overflow-x-hidden rounded-t-[18px] bg-white shadow-[0_-6px_28px_rgba(0,0,0,0.18)] ring-1 ring-black/5 md:rounded-[18px] md:shadow-[0_16px_48px_rgba(0,0,0,0.22)]'
 
   const untitled = card.title.trim() === ''
   const headline = untitled ? (card.stats[0] ?? '') : card.title
@@ -477,14 +481,16 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, 
                   <path d="M12 3v12M12 3l-4 4M12 3l4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" />
                 </svg>
               </button>
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="Close"
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.06] text-black/70 active:scale-95"
-              >
-                <CloseIcon className="h-3.5 w-3.5" />
-              </button>
+              {variant === 'card' ? (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  aria-label="Close"
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.06] text-black/70 active:scale-95"
+                >
+                  <CloseIcon className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
             </div>
           </div>
         </div>

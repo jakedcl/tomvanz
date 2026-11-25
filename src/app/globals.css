@@ -4,6 +4,8 @@ html,
 body {
   height: 100%;
   margin: 0;
+  /* No rubber-band bounce or scroll chaining at the page edge (the map is the page). */
+  overscroll-behavior: none;
   font-family: Helvetica, "Helvetica Neue", Arial, sans-serif;
   color: #111;
   background: #e8e8e8;

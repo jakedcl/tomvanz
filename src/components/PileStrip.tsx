@@ -16,6 +16,8 @@ type Props = {
   onIndexChange: (index: number) => void
   onOpen: (member: BunchMember) => void
   onClose: () => void
+  /** Space to leave under the strip, for a sheet covering the bottom of the map (phones). */
+  bottomOffset?: number
 }
 
 function memberTitle(data: MapData, member: BunchMember): string {
@@ -34,7 +36,7 @@ function memberTitle(data: MapData, member: BunchMember): string {
 /**
  * Swipeable cards for photos, routes, and flights stacked at the same place on the map.
  */
-export function PileStrip({data, members, index, onIndexChange, onOpen, onClose}: Props) {
+export function PileStrip({data, members, index, onIndexChange, onOpen, onClose, bottomOffset = 0}: Props) {
   const scroller = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -52,7 +54,10 @@ export function PileStrip({data, members, index, onIndexChange, onOpen, onClose}
   }
 
   return (
-    <div className="tv-strip pointer-events-none absolute inset-x-0 bottom-[calc(16px+env(safe-area-inset-bottom))] z-20 md:bottom-6 md:left-1/2 md:right-auto md:w-[640px] md:-translate-x-1/2">
+    <div
+      className="tv-strip pointer-events-none absolute inset-x-0 bottom-[calc(16px+env(safe-area-inset-bottom))] z-20 md:bottom-6 md:left-1/2 md:right-auto md:w-[640px] md:-translate-x-1/2"
+      style={bottomOffset > 0 ? {bottom: bottomOffset + 12} : undefined}
+    >
       <div className="mb-2 flex justify-center">
         <button
           type="button"
