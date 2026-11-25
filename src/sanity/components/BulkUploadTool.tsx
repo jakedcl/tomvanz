@@ -16,19 +16,18 @@ import {
   isPhotoFile,
   photoFromUpload,
   plausibleTime,
-  readPhotoMeta,
+  readPhotoMetaFromFile,
   routeFromUpload,
+  SANITY_IMAGE_EXTRACT,
   runPool,
   type Activity,
   type PhotoMeta,
 } from '../../lib/bulk-upload'
 import {photoTitleFallback, routeTitleFallback, titleFromCoordinates} from '../../lib/auto-title'
-import {linkPhotosToFlightDocument} from '../../lib/link-flight-photos'
+import {autoLinkPhotoById, linkPhotosToFlightDocument} from '../../lib/link-flight-photos'
 import {linkPhotosToRouteDocument} from '../../lib/link-route-photos'
 import {postReverseGeocodePlace} from '../../lib/reverse-geocode-client'
-import {photoLinkWindow} from '../../lib/flight-photo-link'
 import {enrichParseFlightPlace, postParseFlight, type ParseFlightApiResponse} from '../../lib/parse-flight-api'
-import {effectiveTakenAt} from '../../lib/photo-taken-at'
 import {lineLengthMeters} from '../../lib/simplify-route'
 import {readGpx} from '../lib/parseGpx'
 
@@ -49,8 +48,9 @@ export type UploaderClient = {
     flightId: string,
     startedAt: string,
     durationSeconds: number,
+    options?: {endedAt?: string; aircraft?: string; displayCoordinates?: string},
   ) => Promise<{unlinkedLabels: string[]}>
-  linkPhotoToFlights: (photoId: string, takenAt: string | undefined, fileName: string) => Promise<void>
+  autoLinkPhoto: (photoId: string) => Promise<void>
   parseFlightLog: (file: File) => Promise<ParseFlightApiResponse>
   reverseGeocodePlace: (lat: number, lng: number) => Promise<string | undefined>
   linkPhotosToRoute: (
@@ -190,7 +190,8 @@ export function BulkUploadTool() {
   const client = useClient({apiVersion: '2026-01-01'})
   const router = useRouter()
   const uploader: UploaderClient = {
-    uploadImage: (file) => client.assets.upload('image', file, {filename: file.name}),
+    uploadImage: (file) =>
+      client.assets.upload('image', file, {filename: file.name, extract: [...SANITY_IMAGE_EXTRACT]}),
     uploadFile: (file) => client.assets.upload('file', file, {filename: file.name}),
     findByAsset: (assetId) =>
       client.fetch<string | null>(
@@ -209,8 +210,8 @@ export function BulkUploadTool() {
     createPhoto: (doc) => client.create(doc),
     createRoute: (doc) => client.create(doc),
     createFlight: (doc) => client.create(doc),
-    linkPhotosToFlight: (flightId, startedAt, durationSeconds) =>
-      linkPhotosToFlightDocument(client, flightId, startedAt, durationSeconds),
+    linkPhotosToFlight: (flightId, startedAt, durationSeconds, options) =>
+      linkPhotosToFlightDocument(client, flightId, startedAt, durationSeconds, options),
     parseFlightLog: async (file) => {
       const token = client.config().token
       if (!token) throw new Error('Sign in to Studio to parse flight logs.')
@@ -224,25 +225,7 @@ export function BulkUploadTool() {
     },
     linkPhotosToRoute: (routeId, startedAt, endedAt, coordinates) =>
       linkPhotosToRouteDocument(client, routeId, startedAt, endedAt, coordinates),
-    linkPhotoToFlights: async (photoId, takenAt, fileName) => {
-      const when = effectiveTakenAt(takenAt, fileName)
-      if (!when) return
-      const flights = await client.fetch<{_id: string; startedAt: string; durationSeconds: number}[]>(
-        `*[_type == "flight" && defined(startedAt) && defined(durationSeconds)]{
-          _id, startedAt, durationSeconds
-        }`,
-      )
-      const taken = new Date(when).getTime()
-      for (const f of flights) {
-        const {start, end} = photoLinkWindow(f.startedAt, f.durationSeconds)
-        const startMs = new Date(start).getTime()
-        const endMs = new Date(end).getTime()
-        if (taken >= startMs && taken <= endMs) {
-          await client.patch(photoId).set({flight: {_type: 'reference', _ref: f._id}}).commit()
-          return
-        }
-      }
-    },
+    autoLinkPhoto: (photoId) => autoLinkPhotoById(client, photoId),
   }
   return (
     <BulkUploadView
@@ -339,6 +322,11 @@ export function BulkUploadView({
               doc._id,
               row.flightParse.startedAt,
               row.flightParse.durationSeconds,
+              {
+                endedAt: row.flightParse.endedAt,
+                aircraft: row.flightParse.aircraft,
+                displayCoordinates: row.flightParse.displayCoordinates,
+              },
             )
             if (unlinkedLabels.length > 0) {
               linkNote = ` Could not auto-link: ${unlinkedLabels.slice(0, 5).join(', ')}${unlinkedLabels.length > 5 ? '…' : ''}.`
@@ -371,6 +359,7 @@ export function BulkUploadView({
               activity: row.activity,
               coordinates: row.route.coordinates,
               startedAt: row.route.startedAt,
+              endedAt: row.route.endedAt,
             }),
           )
           if (row.route.startedAt && row.route.endedAt) {
@@ -395,8 +384,8 @@ export function BulkUploadView({
           return
         }
 
-        const doc = await uploader.createPhoto(photoFromUpload(asset._id, meta, row.title))
-        await uploader.linkPhotoToFlights(doc._id, meta.takenAt, file.name)
+        const doc = await uploader.createPhoto(photoFromUpload(asset._id, meta, row.title, file.name))
+        await uploader.autoLinkPhoto(doc._id)
         if (meta.lat == null) {
           patchRow(id, {
             status: 'no-location',
@@ -460,7 +449,7 @@ export function BulkUploadView({
 
       // Reading the file happens here, before anything is uploaded, so anything missing shows up early.
       for (const {id, file} of photos) {
-        void readPhotoMeta(file).then(async (meta) => {
+        void readPhotoMetaFromFile(file).then(async (meta) => {
           const fallback = photoTitleFallback(file.name)
           let title = fallback
           if (meta.lat != null && meta.lng != null) {

@@ -21,7 +21,7 @@ export const photo = defineType({
       description:
         'Upload the original photo. Its GPS position and date are picked up automatically; if it has no GPS you can drop a pin on the map.',
       type: 'image',
-      options: {accept: 'image/*'},
+      options: {accept: 'image/*', metadata: ['exif', 'location']},
       fields: [
         defineField({
           name: 'alt',
@@ -63,6 +63,32 @@ export const photo = defineType({
       name: 'takenAt',
       title: 'Date taken',
       type: 'datetime',
+    }),
+    defineField({
+      name: 'cameraMake',
+      title: 'Camera make',
+      type: 'string',
+      readOnly: true,
+    }),
+    defineField({
+      name: 'cameraModel',
+      title: 'Camera model',
+      type: 'string',
+      readOnly: true,
+    }),
+    defineField({
+      name: 'altitudeMeters',
+      title: 'Altitude (m)',
+      type: 'number',
+      readOnly: true,
+      hidden: ({document}) => !effectiveDrone(document?.drone as boolean | undefined, null),
+    }),
+    defineField({
+      name: 'linkReview',
+      title: 'Auto-link note',
+      type: 'string',
+      readOnly: true,
+      hidden: ({document}) => !document?.linkReview,
     }),
     defineField({
       name: 'flight',

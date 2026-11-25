@@ -30,6 +30,12 @@ export const flight = defineType({
       type: 'datetime',
     }),
     defineField({
+      name: 'endedAt',
+      title: 'End time',
+      type: 'datetime',
+      readOnly: true,
+    }),
+    defineField({
       name: 'place',
       title: 'Place',
       type: 'string',
@@ -59,6 +65,13 @@ export const flight = defineType({
       title: 'Aircraft',
       type: 'string',
       description: 'Drone model, e.g. DJI Mini 3.',
+    }),
+    defineField({
+      name: 'aircraftSerial',
+      title: 'Aircraft serial',
+      type: 'string',
+      readOnly: true,
+      hidden: () => true,
     }),
     defineField({
       name: 'log',
