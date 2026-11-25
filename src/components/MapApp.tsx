@@ -10,7 +10,6 @@ import {ThreeDButton} from './ThreeDButton'
 import {PileStrip} from './PileStrip'
 import type {SnapName} from '@/lib/sheet-snap'
 import {useMediaQuery} from '@/lib/use-media-query'
-import {useSessionFlag} from '@/lib/use-session-flag'
 import {ReplayController} from '@/lib/flyover/replay-controller'
 import {trackMiles} from '@/lib/track-mileage'
 import {
@@ -19,6 +18,8 @@ import {
   filterOptions,
   normalizeMapFilters,
   resultList,
+  samePills,
+  visibleOnMap,
   type MapFilterState,
   type ResultItem,
 } from '@/lib/map-filters'
@@ -46,16 +47,20 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
   const [selected, setSelected] = useState<SelectedItem | null>(initialSelected)
   // Wide screens get a sidebar beside the map; narrow ones get a bottom sheet over it.
   const isDesktop = useMediaQuery('(min-width: 768px)')
-  const [sidebarOpen, setSidebarOpen] = useSessionFlag('tv-sidebar-open', true)
   const [snap, setSnap] = useState<SnapName>(initialSelected ? 'half' : 'peek')
-  const [mapFilters, setMapFiltersState] = useState<MapFilterState>(emptyMapFilters)
-  const setMapFilters = useCallback(
-    (next: MapFilterState) => setMapFiltersState(normalizeMapFilters(next)),
-    [],
-  )
-  // The map follows typing a beat later, so it doesn't re-fit on every keystroke.
-  const deferredFilters = useDeferredValue(mapFilters)
-  const data = useMemo(() => applyMapFilters(allData, deferredFilters), [allData, deferredFilters])
+  // The pills and the search text are kept apart: only the pills decide what the map shows, and a pills object that
+  // hasn't changed keeps the same identity however much is typed, so typing never redraws the map.
+  const [pills, setPills] = useState<MapFilterState>(emptyMapFilters)
+  const [query, setQuery] = useState('')
+  const mapFilters = useMemo(() => ({...pills, query}), [pills, query])
+  const setMapFilters = useCallback((next: MapFilterState) => {
+    const normalized = normalizeMapFilters(next)
+    setQuery(normalized.query)
+    setPills((current) => (samePills(current, normalized) ? current : {...normalized, query: ''}))
+  }, [])
+  // The map follows the pills a beat later, so it doesn't re-fit while they are being changed.
+  const deferredPills = useDeferredValue(pills)
+  const data = useMemo(() => visibleOnMap(allData, deferredPills), [allData, deferredPills])
   const options = useMemo(() => filterOptions(allData), [allData])
   const results = useMemo(
     () => resultList(applyMapFilters(allData, mapFilters), (track) => trackMiles(track)),
@@ -178,7 +183,6 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
         replay.play()
       }}
       onOpenPhoto={(id) => select({kind: 'pin', id})}
-      topRowClassName={isDesktop ? 'pr-14' : ''}
     />
   ) : null
   const listBody = (
@@ -195,11 +199,7 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
       data-detail-open={card ? 'true' : 'false'}
     >
       {isDesktop ? (
-        <MapSidebar
-          open={sidebarOpen}
-          onToggle={() => setSidebarOpen(!sidebarOpen)}
-          header={card ? null : <SearchBar state={mapFilters} onChange={setMapFilters} />}
-        >
+        <MapSidebar header={card ? null : <SearchBar state={mapFilters} onChange={setMapFilters} />}>
           {details ?? listBody}
         </MapSidebar>
       ) : null}

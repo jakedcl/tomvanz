@@ -12,6 +12,7 @@ import {
   defaultReplaySpeed,
   distanceMeters,
   flightReplayTrack,
+  replaySpeedsFor,
   ROUTE_SPEED_MPS,
   routeReplayTrack,
   sampleReplay,
@@ -181,6 +182,16 @@ describe('replay tracks', () => {
     expect(bearingDegrees(0, 0, 1, 0)).toBeCloseTo(90, 3)
     expect(bearingDegrees(0, 0, 0, -1)).toBeCloseTo(180, 3)
     expect(bearingDegrees(0, 0, -1, 0)).toBeCloseTo(270, 3)
+  })
+
+  it('offers 32x and 64x for routes only', () => {
+    expect(replaySpeedsFor('route')).toEqual([1, 4, 16, 32, 64])
+    expect(replaySpeedsFor('flight')).toEqual([1, 4, 16])
+    expect(replaySpeedsFor(null)).toEqual([1, 4, 16])
+  })
+
+  it('still starts a long route at no more than 16x (the fast speeds are for choosing)', () => {
+    expect(defaultReplaySpeed(36000)).toBe(16)
   })
 
   it('picks the slowest speed that watches in about a minute and a half', () => {
@@ -367,6 +378,42 @@ describe('CameraFollower', () => {
   it('starts on the target when it has no pose yet', () => {
     const follower = new CameraFollower()
     expect(follower.step(1 / 60, target)).toEqual(target)
+  })
+})
+
+describe('ReplayController at the route speeds', () => {
+  it('plays a route at 64x, covering far more ground than at 16x', () => {
+    let clock = 0
+    const queue: (() => void)[] = []
+    const make = () => {
+      const c = new ReplayController({now: () => clock, raf: (cb) => queue.push(cb), caf: () => void (queue.length = 0)})
+      c.load(routeReplayTrack(Array.from({length: 200}, (_, i): [number, number] => [-74, 40 + i * 0.001]), 'hike'))
+      return c
+    }
+    const run = (speed: 16 | 64) => {
+      clock = 0
+      const c = make()
+      c.setSpeed(speed)
+      c.play()
+      for (let i = 0; i < 10; i += 1) {
+        clock += 100
+        queue.splice(0).forEach((cb) => cb())
+      }
+      return c.getFrame()!.t
+    }
+    const slow = run(16)
+    const fast = run(64)
+    expect(fast).toBeGreaterThan(slow * 3.5)
+    expect(fast).toBeLessThan(slow * 4.5)
+  })
+
+  it('accepts 32x and 64x, and reports them', () => {
+    const c = new ReplayController()
+    c.load(routeReplayTrack([[-74, 40], [-74, 40.01]], 'bike'))
+    c.setSpeed(32)
+    expect(c.getState().speed).toBe(32)
+    c.setSpeed(64)
+    expect(c.getState().speed).toBe(64)
   })
 })
 

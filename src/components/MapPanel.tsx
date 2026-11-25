@@ -19,12 +19,11 @@ type InfoCardProps = ComponentProps<typeof InfoCard>
  */
 export function DetailsPanel({
   onBack,
-  topRowClassName = '',
   ...card
-}: Omit<InfoCardProps, 'onClose' | 'variant'> & {onBack: () => void; topRowClassName?: string}) {
+}: Omit<InfoCardProps, 'onClose' | 'variant'> & {onBack: () => void}) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className={`flex shrink-0 items-center border-b border-black/5 px-2 py-2 ${topRowClassName}`}>
+      <div className="flex shrink-0 items-center border-b border-black/5 px-2 py-2">
         <button
           type="button"
           onClick={onBack}

@@ -1,7 +1,7 @@
 'use client'
 
 import {useCallback, useEffect, useState, useSyncExternalStore} from 'react'
-import {REPLAY_SPEEDS} from '@/lib/flyover/replay-track'
+import {replaySpeedsFor} from '@/lib/flyover/replay-track'
 import type {ReplayController, ReplayFrame} from '@/lib/flyover/replay-controller'
 
 /** The replay's state, for the controls (it changes when you press something, not every frame). */
@@ -83,7 +83,7 @@ export function ReplayControls({replay, onPlay}: Props) {
         {state.playing ? 'Pause' : 'Replay'}
       </button>
       <div className="flex h-9 items-center rounded-full bg-black/[0.06] p-0.5" role="group" aria-label="Replay speed">
-        {REPLAY_SPEEDS.map((speed) => (
+        {replaySpeedsFor(state.kind).map((speed) => (
           <button
             key={speed}
             type="button"

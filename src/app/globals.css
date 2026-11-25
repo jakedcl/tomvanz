@@ -47,6 +47,16 @@ button.maplibregl-marker[data-active='true'] {
   z-index: 100000 !important;
 }
 
+/* With its popup open, the photo's thumbnail steps aside: the popup's pointer marks the spot instead.
+   (The inner layer fades; MapLibre sets its own inline opacity on the marker itself.) */
+button.maplibregl-marker[data-selected='true'] {
+  pointer-events: none;
+}
+
+button.maplibregl-marker[data-selected='true'] .tv-pin {
+  opacity: 0;
+}
+
 button.maplibregl-marker[data-active='true'] .tv-pin {
   scale: 1.9;
   filter: drop-shadow(0 14px 14px rgba(0, 0, 0, 0.55)) drop-shadow(0 3px 5px rgba(0, 0, 0, 0.45));
@@ -91,7 +101,9 @@ button.maplibregl-marker[data-active='true'] .tv-pin {
   border-radius: 0;
 }
 
+/* The small pointer under the popup, its tip on the photo's exact spot. InfoCard sets --tip to match the card's bottom. */
 .tv-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+  border-width: 9px 8px 0;
   border-top-color: var(--tip, #fff);
   filter: drop-shadow(0 3px 3px rgba(0, 0, 0, 0.28));
 }

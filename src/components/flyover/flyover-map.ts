@@ -49,8 +49,8 @@ export type FlyoverDeps = {
 export type FlyoverHandle = {
   /** Call when the flights shown, the selection, or 3D mode changed. */
   sync: () => void
-  /** The flight whose floating tube is under a screen point, if tubes are showing. */
-  pickFlight: (x: number, y: number) => string | null
+  /** The flight whose floating tube is nearest a screen point (within `maxPx`), if tubes are showing. */
+  pickFlight: (x: number, y: number, maxPx?: number) => {id: string; distance: number} | null
   dispose: () => void
 }
 
@@ -674,7 +674,7 @@ export function createFlyover(map: MapLibreMap, deps: FlyoverDeps): FlyoverHandl
       applyLineVisibility()
       scheduleSync(0)
     },
-    pickFlight: (x, y) => (layer && tubesWanted() ? layer.pick(x, y) : null),
+    pickFlight: (x, y, maxPx) => (layer && tubesWanted() ? layer.pick(x, y, maxPx) : null),
     dispose: () => {
       disposed = true
       if (syncTimer) clearTimeout(syncTimer)
