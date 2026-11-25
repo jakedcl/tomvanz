@@ -445,7 +445,8 @@ export function MapCanvas({
     }
     const map = mapRef.current
     if (!map || !readyRef.current) return
-    const tilt = !gestureEnabledRef.current
+    // A replay flies the camera to its own angle, so the preset tilt would only fight it.
+    const tilt = !gestureEnabledRef.current && !replayRef.current.getState().playing
     gestureEnabledRef.current = false
     applyThreeD(map, threeD, tilt)
     flyoverRef.current?.sync()

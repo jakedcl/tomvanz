@@ -15,7 +15,7 @@ export function useReplayState(replay: ReplayController) {
  * Where the replay is, for a chart's cursor: null until the marker is on the map. Updated a few times a second
  * while playing (a chart doesn't need every frame) and straight away when you drag along it.
  */
-export function useReplayCursor(replay: ReplayController | undefined, fps = 15): ReplayFrame | null {
+export function useReplayCursor(replay: ReplayController | undefined, fps = 30): ReplayFrame | null {
   const [frame, setFrame] = useState<ReplayFrame | null>(null)
   useEffect(() => {
     if (!replay) return

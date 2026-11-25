@@ -31,6 +31,8 @@ export type ReplaySample = {
   course: number
   /** 0 to 1 through the replay (by time). */
   fraction: number
+  /** 0 to 1 along the path (by distance travelled), for drawing the part already covered. */
+  distanceFraction: number
   t: number
 }
 
@@ -116,9 +118,14 @@ function positionAt(track: ReplayTrack, t: number) {
   const i = indexAt(points, clamped)
   const a = points[i]!
   const b = points[i + 1]
-  if (!b) return {lng: a.lng, lat: a.lat, height: a.height}
+  if (!b) return {lng: a.lng, lat: a.lat, height: a.height, dist: a.dist}
   const k = (clamped - a.t) / (b.t - a.t)
-  return {lng: a.lng + (b.lng - a.lng) * k, lat: a.lat + (b.lat - a.lat) * k, height: a.height + (b.height - a.height) * k}
+  return {
+    lng: a.lng + (b.lng - a.lng) * k,
+    lat: a.lat + (b.lat - a.lat) * k,
+    height: a.height + (b.height - a.height) * k,
+    dist: a.dist + (b.dist - a.dist) * k,
+  }
 }
 
 /**
@@ -137,11 +144,12 @@ export function courseAt(track: ReplayTrack, t: number, windowSeconds = 4): numb
 
 export function sampleReplay(track: ReplayTrack, t: number): ReplaySample {
   const clamped = Math.min(track.durationSeconds, Math.max(0, t))
-  const position = positionAt(track, clamped)
+  const {dist, ...position} = positionAt(track, clamped)
   return {
     ...position,
     course: courseAt(track, clamped),
     fraction: track.durationSeconds > 0 ? clamped / track.durationSeconds : 0,
+    distanceFraction: track.lengthMeters > 0 ? Math.min(1, dist / track.lengthMeters) : 0,
     t: clamped,
   }
 }

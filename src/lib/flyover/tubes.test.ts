@@ -50,6 +50,23 @@ describe('buildTube', () => {
     }
   })
 
+  it('says how far along its path each ring is, from 0 to 1, evenly for an even path', () => {
+    const tube = buildTube(line(5, (i) => ({x: i * 10, y: 0, z: 30})), 4)
+    expect(tube.along.length).toBe(5 * 4)
+    const rings = [0, 1, 2, 3, 4].map((i) => tube.along[i * 4]!)
+    expect(rings).toEqual([0, 0.25, 0.5, 0.75, 1])
+    for (let i = 0; i < 5; i += 1) expect(new Set([...tube.along.slice(i * 4, i * 4 + 4)]).size).toBe(1) // same for the whole ring
+  })
+
+  it('keeps each merged tube’s own 0 to 1', () => {
+    const a = buildTube(line(3, (i) => ({x: i, y: 0, z: 0})), 3)
+    const b = buildTube(line(3, (i) => ({x: i * 100, y: 5, z: 0})), 3)
+    const merged = mergeTubes([a, b])
+    expect(merged.along.length).toBe(a.along.length + b.along.length)
+    expect(merged.along[a.along.length]).toBe(0)
+    expect(merged.along[merged.along.length - 1]).toBe(1)
+  })
+
   it('returns nothing for fewer than two points', () => {
     expect(buildTube([], 5).index.length).toBe(0)
     expect(buildTube([{x: 0, y: 0, z: 0}], 5).index.length).toBe(0)

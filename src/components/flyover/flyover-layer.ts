@@ -37,6 +37,8 @@ export type MarkerState = {
   /** Sit on the ground (a route) rather than float (a flight). */
   onGround: boolean
   color: string
+  /** 1 fully there, 0 gone (it fades away when a replay ends). */
+  opacity: number
 }
 
 type Cell = {
@@ -58,22 +60,34 @@ type Built = {
 const CELL_DEGREES = 0.5
 const MARKER_RADIUS_PX = 7.5
 
+// aAlong is how far along its path a vertex is (0 to 1). Where it is behind uProgress (the part the replay has
+// already flown) the tube glows a neon colour and swells a little; uNeon (0 to 1) fades that in and out.
 const TUBE_VERTEX = `
 attribute vec3 aOffset;
+attribute float aAlong;
 uniform float uRadius;
+uniform float uProgress;
+uniform float uNeon;
 varying vec3 vNormal;
+varying float vTrail;
 void main() {
   vNormal = aOffset;
-  vec3 p = position + aOffset * uRadius;
+  float trail = uNeon * (1.0 - smoothstep(uProgress - 0.002, uProgress + 0.002, aAlong)) * step(0.0, uProgress);
+  vTrail = trail;
+  vec3 p = position + aOffset * uRadius * (1.0 + 0.5 * trail);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
 }`
 
 const TUBE_FRAGMENT = `
 uniform vec3 uColor;
+uniform vec3 uNeonColor;
 varying vec3 vNormal;
+varying float vTrail;
 void main() {
   float light = 0.64 + 0.36 * dot(normalize(vNormal), normalize(vec3(0.35, -0.25, 0.9)));
-  gl_FragColor = vec4(uColor * light, 1.0);
+  vec3 lit = uColor * light;
+  vec3 glow = uNeonColor * (0.92 + 0.3 * light);
+  gl_FragColor = vec4(mix(lit, glow, vTrail), 1.0);
 }`
 
 const MARKER_VERTEX = `
@@ -86,12 +100,16 @@ void main() {
 
 const MARKER_FRAGMENT = `
 uniform vec3 uColor;
+uniform float uOpacity;
 varying vec3 vNormal;
 void main() {
   float light = 0.5 + 0.5 * dot(normalize(vNormal), normalize(vec3(0.35, -0.25, 0.9)));
   vec3 base = mix(uColor, vec3(1.0), 0.45);
-  gl_FragColor = vec4(base * (0.6 + 0.4 * light), 1.0);
+  gl_FragColor = vec4(base * (0.6 + 0.4 * light), uOpacity);
 }`
+
+/** The bright colour of the part of a flight already flown. */
+const NEON_COLOR = '#ff8a1e'
 
 function rgb(hex: string): Vector3 {
   const value = Number.parseInt(hex.replace('#', ''), 16)
@@ -137,11 +155,19 @@ export class FlyoverLayer implements CustomLayerInterface {
     const color = rgb(options.tubeColor)
     this.tubePx = options.tubePx ?? 1.7
     this.selectedPx = options.selectedPx ?? 3.2
+    const neon = rgb(NEON_COLOR)
     const make = (c: Vector3) =>
       new ShaderMaterial({
         vertexShader: TUBE_VERTEX,
         fragmentShader: TUBE_FRAGMENT,
-        uniforms: {uRadius: {value: 1}, uColor: {value: c}},
+        uniforms: {
+          uRadius: {value: 1},
+          uColor: {value: c},
+          uNeonColor: {value: neon},
+          // No trail unless told (negative means none).
+          uProgress: {value: -1},
+          uNeon: {value: 0},
+        },
         side: DoubleSide,
       })
     this.baseMaterial = make(color)
@@ -185,6 +211,16 @@ export class FlyoverLayer implements CustomLayerInterface {
     if (id === this.selectedId) return
     this.selectedId = id
     if (this.built.size > 0) this.rebuild()
+  }
+
+  /**
+   * Lights up the part of the open flight's tube that the replay has already flown: `progress` is how far along
+   * (0 to 1) and `neon` how strongly it glows (0 to 1). `null` turns the trail off.
+   */
+  setTrail(progress: number | null, neon: number) {
+    this.selectedMaterial.uniforms.uProgress!.value = progress == null ? -1 : progress
+    this.selectedMaterial.uniforms.uNeon!.value = neon
+    this.map?.triggerRepaint()
   }
 
   setMarker(marker: MarkerState | null) {
@@ -342,6 +378,7 @@ export class FlyoverLayer implements CustomLayerInterface {
     const geometry = new BufferGeometry()
     geometry.setAttribute('position', new BufferAttribute(buffers.center, 3))
     geometry.setAttribute('aOffset', new BufferAttribute(buffers.offset, 3))
+    geometry.setAttribute('aAlong', new BufferAttribute(buffers.along, 1))
     geometry.setIndex(new BufferAttribute(buffers.index, 1))
     const mesh = new Mesh(geometry, material)
     mesh.frustumCulled = false
@@ -362,7 +399,8 @@ export class FlyoverLayer implements CustomLayerInterface {
     this.markerMaterial = new ShaderMaterial({
       vertexShader: MARKER_VERTEX,
       fragmentShader: MARKER_FRAGMENT,
-      uniforms: {uRadius: {value: 1}, uColor: {value: new Vector3(0.85, 0.47, 0.02)}},
+      uniforms: {uRadius: {value: 1}, uColor: {value: new Vector3(0.85, 0.47, 0.02)}, uOpacity: {value: 1}},
+      transparent: true,
     })
     this.markerMesh = new Mesh(new SphereGeometry(1, 18, 12), this.markerMaterial)
     this.markerMesh.frustumCulled = false
@@ -379,6 +417,7 @@ export class FlyoverLayer implements CustomLayerInterface {
     this.markerMesh!.position.set(0, 0, z)
     this.markerMaterial!.uniforms.uRadius!.value = radius
     this.markerMaterial!.uniforms.uColor!.value = rgb(marker.color)
+    this.markerMaterial!.uniforms.uOpacity!.value = marker.opacity
   }
 
   private disposeMarker() {

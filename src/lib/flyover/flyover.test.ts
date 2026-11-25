@@ -1,8 +1,10 @@
 import {describe, expect, it} from 'vitest'
 
 import type {FlightSeriesSample} from '@/lib/flight-log'
+import {neonTrailColor, trackColor} from '@/lib/track-color'
 import {absoluteAltitudes, GROUND_CLEARANCE_METERS} from './altitude'
-import {CameraFollower, easeBearing, easeToward, shortestAngleDelta, type CameraPose} from './camera-follow'
+import {CameraFollower, easeBearing, easeToward, shortestAngleDelta, smoothDamp, smoothDampAngle, type CameraPose} from './camera-follow'
+import {LowPass} from './smooth'
 import {ReplayController, type ReplayFrame} from './replay-controller'
 import {
   bearingDegrees,
@@ -118,6 +120,14 @@ describe('replay tracks', () => {
     expect(track.points.map((p) => p.t)).toEqual([0, 10, 20])
   })
 
+  it('says how far along the path (by distance) it has got, for the trail', () => {
+    const track = routeReplayTrack([[-74, 40], [-74, 40.01], [-74, 40.03]], 'bike')!
+    expect(sampleReplay(track, 0).distanceFraction).toBe(0)
+    expect(sampleReplay(track, track.durationSeconds).distanceFraction).toBe(1)
+    // the second leg is twice as long, so a third of the way (by distance) is the end of the first leg
+    expect(sampleReplay(track, track.durationSeconds / 3).distanceFraction).toBeCloseTo(1 / 3, 3)
+  })
+
   it('interpolates position and height at any time, and clamps outside it', () => {
     const track = flightReplayTrack(series)!
     const mid = sampleReplay(track, 5)
@@ -212,6 +222,99 @@ describe('camera easing', () => {
   })
 })
 
+describe('neon trail colours', () => {
+  const hue = (hex: string) => {
+    const n = Number.parseInt(hex.slice(1), 16)
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+  }
+
+  it('is neon green for a hike and neon blue for a bike ride', () => {
+    const [hr, hg, hb] = hue(neonTrailColor('hike'))
+    expect(hg).toBeGreaterThan(220)
+    expect(hg).toBeGreaterThan(hr + 100)
+    expect(hg).toBeGreaterThan(hb + 60)
+    const [br, bg, bb] = hue(neonTrailColor('bike'))
+    expect(bb).toBeGreaterThan(220)
+    expect(bb).toBeGreaterThan(br + 150)
+    expect(bb).toBeGreaterThan(bg + 40)
+  })
+
+  it('is brighter than the route’s own line colour', () => {
+    const light = (hex: string) => Math.max(...hue(hex))
+    for (const activity of ['hike', 'bike', 'other'] as const) {
+      expect(light(neonTrailColor(activity))).toBeGreaterThan(light(trackColor(activity)))
+    }
+  })
+})
+
+describe('smoothDamp (the spring that moves the camera)', () => {
+  const run = (target: number, seconds: number, fps = 60) => {
+    let value = 0
+    let velocity = 0
+    const path: number[] = []
+    for (let i = 0; i < seconds * fps; i += 1) {
+      ;[value, velocity] = smoothDamp(value, target, velocity, 0.5, 1 / fps)
+      path.push(value)
+    }
+    return path
+  }
+
+  it('starts from rest: the first frame barely moves, then it speeds up', () => {
+    const path = run(100, 2)
+    const first = path[0]!
+    const second = path[1]! - path[0]!
+    const later = path[10]! - path[9]!
+    expect(first).toBeLessThan(0.5)
+    expect(later).toBeGreaterThan(second)
+  })
+
+  it('arrives without overshooting', () => {
+    const path = run(100, 4)
+    expect(Math.max(...path)).toBeLessThanOrEqual(100.0001)
+    expect(path[path.length - 1]).toBeCloseTo(100, 2)
+  })
+
+  it('moves the same whether the frames are fast or slow', () => {
+    expect(run(100, 1, 120)[119]).toBeCloseTo(run(100, 1, 30)[29]!, 0)
+  })
+
+  it('never moves with no time passing', () => {
+    expect(smoothDamp(5, 10, 2, 0.5, 0)).toEqual([5, 2])
+  })
+
+  it('turns a bearing the short way round', () => {
+    let value = 350
+    let velocity = 0
+    for (let i = 0; i < 20; i += 1) {
+      ;[value, velocity] = smoothDampAngle(value, 10, velocity, 0.5, 1 / 60)
+      expect(value > 345 || value < 15).toBe(true)
+    }
+  })
+})
+
+describe('LowPass', () => {
+  it('smooths jitter, and glides through a big sudden change instead of jumping', () => {
+    const filter = new LowPass(0.2)
+    expect(filter.next(100, 1 / 60)).toBe(100)
+    const jittered = filter.next(104, 1 / 60)
+    expect(jittered).toBeGreaterThan(100)
+    expect(jittered).toBeLessThan(102)
+    // a terrain tile loads and the ground is suddenly 500 m higher: it eases there
+    const first = filter.next(600, 1 / 60)
+    expect(first).toBeLessThan(150)
+    let value = first
+    for (let i = 0; i < 120; i += 1) value = filter.next(600, 1 / 60)
+    expect(value).toBeGreaterThan(595)
+  })
+
+  it('forgets its history on reset', () => {
+    const filter = new LowPass()
+    filter.next(100, 1 / 60)
+    filter.reset()
+    expect(filter.next(300, 1 / 60)).toBe(300)
+  })
+})
+
 describe('CameraFollower', () => {
   const target: CameraPose = {lng: -74, lat: 40, elevation: 300, bearing: 10, pitch: 66, zoom: 16}
   const start: CameraPose = {lng: -74.01, lat: 40.01, elevation: 0, bearing: 350, pitch: 0, zoom: 12}
@@ -237,12 +340,28 @@ describe('CameraFollower', () => {
     }
   })
 
-  it('takes small steps (never jumps) in one frame', () => {
+  it('starts from rest: the first frame is tiny, even for a far target', () => {
     const follower = new CameraFollower()
     follower.reset(start)
     const pose = follower.step(1 / 60, target)
-    expect(Math.abs(pose.lng - start.lng)).toBeLessThan(Math.abs(target.lng - start.lng) * 0.1)
-    expect(pose.pitch).toBeLessThan(5)
+    expect(Math.abs(pose.lng - start.lng)).toBeLessThan(Math.abs(target.lng - start.lng) * 0.01)
+    expect(pose.pitch).toBeLessThan(0.5)
+    expect(pose.zoom - start.zoom).toBeLessThan(0.05)
+  })
+
+  it('follows a moving target closely without ever running ahead of it', () => {
+    const follower = new CameraFollower()
+    follower.reset({...target, lng: -74})
+    let lag = 0
+    for (let i = 0; i < 600; i += 1) {
+      const t = i / 60
+      const moving = {...target, lng: -74 + t * 0.0001}
+      const pose = follower.step(1 / 60, moving)
+      lag = moving.lng - pose.lng
+      expect(lag).toBeGreaterThanOrEqual(-1e-9)
+    }
+    // about 0.28 s behind at 0.0001 deg/s
+    expect(lag).toBeLessThan(0.0001 * 0.6)
   })
 
   it('starts on the target when it has no pose yet', () => {
@@ -417,6 +536,32 @@ describe('ReplayController', () => {
     expect(controller.getState().playing).toBe(false)
     advance(5000, 50)
     expect(ended).toBe(1)
+  })
+
+  it('holds the clock still while keeping frames coming, then sets off', () => {
+    const {controller, advance} = rig()
+    controller.load(flight())
+    controller.setSpeed(4)
+    controller.play()
+    controller.hold(1000)
+    const frames: number[] = []
+    controller.subscribeFrames((f) => frames.push(f.t))
+    advance(900, 9)
+    expect(controller.getFrame()!.t).toBe(0)
+    expect(frames.length).toBeGreaterThan(3) // still sending frames (the camera is flying in)
+    advance(2000, 20)
+    expect(controller.getFrame()!.t).toBeGreaterThan(2)
+  })
+
+  it('a pause cancels a hold', () => {
+    const {controller, advance} = rig()
+    controller.load(flight())
+    controller.play()
+    controller.hold(5000)
+    controller.pause()
+    controller.play()
+    advance(1000, 10)
+    expect(controller.getFrame()!.t).toBeGreaterThan(0)
   })
 
   it('hide() takes the marker away but keeps the path', () => {

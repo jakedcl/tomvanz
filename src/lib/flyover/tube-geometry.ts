@@ -6,6 +6,8 @@ export type TubeBuffers = {
   center: Float32Array
   /** Unit vector from the centre line out to the surface; the radius is applied on the GPU. */
   offset: Float32Array
+  /** How far along its own path each vertex is, 0 at the start to 1 at the end (by horizontal distance). */
+  along: Float32Array
   index: Uint32Array
 }
 
@@ -30,11 +32,19 @@ function normalize(a: Vec3, fallback: Vec3): Vec3 {
 export function buildTube(points: Vec3[], radialSegments = 5): TubeBuffers {
   const n = points.length
   const sides = Math.max(3, Math.floor(radialSegments))
-  if (n < 2) return {center: new Float32Array(0), offset: new Float32Array(0), index: new Uint32Array(0)}
+  if (n < 2) return {center: new Float32Array(0), offset: new Float32Array(0), along: new Float32Array(0), index: new Uint32Array(0)}
 
   const center = new Float32Array(n * sides * 3)
   const offset = new Float32Array(n * sides * 3)
+  const along = new Float32Array(n * sides)
   const index = new Uint32Array((n - 1) * sides * 6)
+
+  // Distance covered so far at each point (horizontal), to say how far along the path a vertex is.
+  const covered = new Float64Array(n)
+  for (let i = 1; i < n; i += 1) {
+    covered[i] = covered[i - 1]! + Math.hypot(points[i]!.x - points[i - 1]!.x, points[i]!.y - points[i - 1]!.y)
+  }
+  const total = covered[n - 1]! || 1
 
   let tangent: Vec3 = {x: 0, y: 0, z: 1}
   let normal: Vec3 | null = null
@@ -62,6 +72,7 @@ export function buildTube(points: Vec3[], radialSegments = 5): TubeBuffers {
       offset[at] = normal.x * c + binormal.x * s
       offset[at + 1] = normal.y * c + binormal.y * s
       offset[at + 2] = normal.z * c + binormal.z * s
+      along[i * sides + k] = covered[i]! / total
     }
   }
 
@@ -80,7 +91,7 @@ export function buildTube(points: Vec3[], radialSegments = 5): TubeBuffers {
       index[w++] = c
     }
   }
-  return {center, offset, index}
+  return {center, offset, along, index}
 }
 
 /** Joins several tubes into one set of buffers (one draw call), keeping each tube's indexes pointing at its own vertices. */
@@ -90,15 +101,19 @@ export function mergeTubes(tubes: TubeBuffers[]): TubeBuffers {
   const center = new Float32Array(vertexFloats)
   const offset = new Float32Array(vertexFloats)
   const index = new Uint32Array(indexCount)
+  const along = new Float32Array(tubes.reduce((sum, t) => sum + t.along.length, 0))
   let floatAt = 0
   let indexAt = 0
+  let alongAt = 0
   for (const tube of tubes) {
     const base = floatAt / 3
     center.set(tube.center, floatAt)
     offset.set(tube.offset, floatAt)
+    along.set(tube.along, alongAt)
+    alongAt += tube.along.length
     for (let i = 0; i < tube.index.length; i += 1) index[indexAt + i] = tube.index[i]! + base
     floatAt += tube.center.length
     indexAt += tube.index.length
   }
-  return {center, offset, index}
+  return {center, offset, along, index}
 }

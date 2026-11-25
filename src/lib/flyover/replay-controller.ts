@@ -64,6 +64,7 @@ export class ReplayController {
   private endedListeners = new Set<() => void>()
   private rafId: number | null = null
   private lastNow = 0
+  private holdUntil = 0
   private readonly now: () => number
   private readonly raf: (callback: () => void) => number
   private readonly caf: (id: number) => void
@@ -134,13 +135,23 @@ export class ReplayController {
   play() {
     if (!this.track) return
     if (this.t >= this.track.durationSeconds - 0.05) this.t = 0
+    this.holdUntil = 0
     this.setState({...this.state, playing: true, visible: true, following: !this.state.reducedMotion})
     this.lastNow = this.now()
     this.startLoop()
     this.emitFrame()
   }
 
+  /**
+   * Keeps the clock still for a moment even though it is playing (frames still go out). The camera uses it to
+   * fly in to the start before the marker sets off.
+   */
+  hold(milliseconds: number) {
+    this.holdUntil = milliseconds > 0 ? this.now() + milliseconds : 0
+  }
+
   pause() {
+    this.holdUntil = 0
     if (!this.state.playing) return
     this.stopLoop()
     this.setState({...this.state, playing: false})
@@ -227,6 +238,12 @@ export class ReplayController {
       this.rafId = null
       if (!this.track || !this.state.playing) return
       const now = this.now()
+      if (now < this.holdUntil) {
+        this.lastNow = now
+        this.emitFrame()
+        this.rafId = this.raf(tick)
+        return
+      }
       // A slow frame or a background tab shouldn't make it leap: take at most a quarter second.
       const elapsed = Math.min(0.25, Math.max(0, (now - this.lastNow) / 1000))
       this.lastNow = now
@@ -245,6 +262,7 @@ export class ReplayController {
   }
 
   private stopLoop() {
+    this.holdUntil = 0
     if (this.rafId !== null) this.caf(this.rafId)
     this.rafId = null
   }
