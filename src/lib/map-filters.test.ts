@@ -4,6 +4,7 @@ import {
   applyMapFilters,
   emptyMapFilters,
   filterOptions,
+  filterSubRows,
   filtersActive,
   flatTypeOptions,
   resultList,
@@ -106,6 +107,14 @@ describe('filterOptions', () => {
     const {groups, routeKinds} = filterOptions(data)
     expect(groups.map((o) => o.value)).toEqual(['pin:all', 'track:all'])
     expect(routeKinds.map((o) => o.value)).toEqual(['track:hike'])
+  })
+})
+
+describe('filterSubRows', () => {
+  it('shows photo and route sub-rows when those parents are active', () => {
+    const opts = filterOptions(data)
+    const rows = filterSubRows({...emptyMapFilters, types: ['pin:all', 'track:all'], drone: true}, opts)
+    expect(rows.map((r) => r.parent)).toEqual(['photos', 'routes'])
   })
 })
 

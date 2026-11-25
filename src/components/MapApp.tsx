@@ -8,6 +8,7 @@ import {ThreeDButton} from './ThreeDButton'
 import {MapSearch} from './MapSearch'
 import {PileStrip} from './PileStrip'
 import type {FlightSeriesSample} from '@/lib/flight-log'
+import type {RouteScrubPoint} from '@/lib/elevation'
 import {trackMiles} from '@/lib/track-mileage'
 import {
   applyMapFilters,
@@ -57,9 +58,13 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
   const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [panelHeight, setPanelHeight] = useState(0)
   const flightScrubRef = useRef<((sample: FlightSeriesSample | null) => void) | null>(null)
+  const routeScrubRef = useRef<((point: RouteScrubPoint | null) => void) | null>(null)
   const onPanelHeight = useCallback((height: number) => setPanelHeight(height), [])
   const registerFlightScrub = useCallback((handler: (sample: FlightSeriesSample | null) => void) => {
     flightScrubRef.current = handler
+  }, [])
+  const registerRouteScrub = useCallback((handler: (point: RouteScrubPoint | null) => void) => {
+    routeScrubRef.current = handler
   }, [])
 
   useEffect(() => () => {
@@ -129,13 +134,14 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
   }, [selected, data])
 
   const card = selectedStillVisible ? selected : null
+  const stripOpen = Boolean(card && card.kind !== 'pin')
 
   return (
     <div
       className="relative h-full w-full overflow-hidden bg-[#e8e8e8]"
       data-strip={pileMembers && pileMembers.length > 1 && !card ? 'true' : 'false'}
       data-detail-open={card ? 'true' : 'false'}
-      style={card ? ({['--detail-panel-height' as string]: `${panelHeight}px`}) : undefined}
+      style={stripOpen ? ({['--detail-panel-height' as string]: `${panelHeight}px`}) : undefined}
     >
       {mapFailed ? (
         <div className="flex h-full items-center justify-center text-[14px] text-black/70">
@@ -154,8 +160,9 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
           onPile={openPile}
           pileMembers={pileMembers}
           onMapError={() => setMapFailed(true)}
-          panelHeight={card ? panelHeight : 0}
+          panelHeight={stripOpen ? panelHeight : 0}
           onRegisterFlightScrub={registerFlightScrub}
+          onRegisterRouteScrub={registerRouteScrub}
         />
       )}
       {!mapFailed ? (
@@ -220,13 +227,14 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
           onClose={() => select(null)}
         />
       ) : null}
-      {card && data ? (
+      {stripOpen && data ? (
         <MapDetailPanel onHeightChange={onPanelHeight}>
           <InfoCard
             data={data}
-            selected={card}
+            selected={card!}
             onClose={() => select(null)}
             onFlightScrub={(sample) => flightScrubRef.current?.(sample)}
+            onRouteScrub={(point) => routeScrubRef.current?.(point)}
             onOpenPhoto={(id) => select({kind: 'pin', id})}
           />
         </MapDetailPanel>

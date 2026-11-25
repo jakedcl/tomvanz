@@ -57,10 +57,9 @@ export function filterOptions(data: MapData) {
     const key = flightAircraftType(model)
     aircraftModels.set(key, model)
   }
-  const aircraftChips: TypeOption[] =
-    aircraftModels.size > 1
-      ? [...aircraftModels.entries()].map(([value, label]) => ({value, label}))
-      : []
+  const aircraftChips: TypeOption[] = [...aircraftModels.entries()]
+    .map(([value, label]) => ({value, label}))
+    .sort((a, b) => a.label.localeCompare(b.label))
 
   const groups: TypeOption[] = []
   if (data.pins.length > 0) groups.push({value: 'pin:all', label: 'Photos'})
@@ -68,7 +67,47 @@ export function filterOptions(data: MapData) {
   if (data.flights.length > 0) groups.push({value: 'flight:all', label: 'Flights'})
 
   const hasDrone = data.pins.some((pin) => pin.isDrone)
-  return {groups, routeKinds: kinds, aircraftChips, hasDrone}
+  const routesExtras: TypeOption[] =
+    data.flights.length > 0 ? [{value: flightType(), label: 'Flights'}] : []
+  return {groups, routeKinds: kinds, aircraftChips, hasDrone, routesExtras}
+}
+
+export type FilterSubRowParent = 'photos' | 'routes' | 'flights'
+
+export type FilterSubRow = {
+  parent: FilterSubRowParent
+  depth: number
+  label: string
+}
+
+function photosParentActive(state: MapFilterState) {
+  return state.drone || state.types.includes('pin:all') || state.types.includes(pinType())
+}
+
+function routesParentActive(state: MapFilterState) {
+  return state.types.includes('track:all') || state.types.some((t) => t.startsWith('track:'))
+}
+
+function flightsParentActive(state: MapFilterState) {
+  return state.types.includes(flightType()) || state.types.some((t) => t.startsWith('flight:aircraft:'))
+}
+
+/** Sub-filter rows to show under the main chip row, ordered by depth then parent order. */
+export function filterSubRows(
+  state: MapFilterState,
+  options: ReturnType<typeof filterOptions>,
+): FilterSubRow[] {
+  const rows: FilterSubRow[] = []
+  if (options.hasDrone && photosParentActive(state)) {
+    rows.push({parent: 'photos', depth: 1, label: 'Photos'})
+  }
+  if (options.routeKinds.length > 0 && routesParentActive(state)) {
+    rows.push({parent: 'routes', depth: 1, label: 'Routes'})
+  }
+  if (options.aircraftChips.length > 0 && flightsParentActive(state)) {
+    rows.push({parent: 'flights', depth: 1, label: 'Flights'})
+  }
+  return rows.sort((a, b) => a.depth - b.depth || a.parent.localeCompare(b.parent))
 }
 
 /** Flat list for tests and legacy callers. */

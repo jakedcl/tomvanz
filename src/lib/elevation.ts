@@ -15,10 +15,19 @@ export type ElevationProfile = {
   miles: number[]
   /** Elevation in feet. */
   feet: number[]
+  /** Map coordinates at each sample, aligned with `miles` / `feet`. */
+  lnglats: [number, number][]
   gainFeet: number
   lossFeet: number
   minFeet: number
   maxFeet: number
+}
+
+export type RouteScrubPoint = {
+  lng: number
+  lat: number
+  miles: number
+  feet: number
 }
 
 type Tile = {data: Uint8ClampedArray; size: number}
@@ -148,6 +157,7 @@ export async function routeElevation(coords: [number, number][]): Promise<Elevat
   return {
     miles: points.map((p) => p.miles),
     feet,
+    lnglats: points.map((p) => [p.lng, p.lat] as [number, number]),
     gainFeet: gain,
     lossFeet: loss,
     minFeet: Math.min(...feet),

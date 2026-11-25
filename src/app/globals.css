@@ -78,6 +78,22 @@ button.maplibregl-marker[data-active='true'] .tv-pin {
   transition: none !important;
 }
 
+.tv-popup.maplibregl-popup {
+  z-index: 50000;
+}
+
+.tv-popup .maplibregl-popup-content {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.tv-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+  border-top-color: var(--tip, #fff);
+  filter: drop-shadow(0 3px 3px rgba(0, 0, 0, 0.28));
+}
+
 @keyframes tv-card-in {
   from {
     opacity: 0;

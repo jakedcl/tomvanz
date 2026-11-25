@@ -165,6 +165,9 @@ function routeSummary(route: NonNullable<Row['route']>) {
   if (route.startedAt) {
     parts.push(new Date(route.startedAt).toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'}))
   }
+  if (!route.startedAt && !route.endedAt) {
+    parts.push('This file has no times, so photos cannot be matched to it automatically.')
+  }
   return parts.join(' · ')
 }
 

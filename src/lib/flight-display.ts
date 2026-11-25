@@ -15,6 +15,7 @@ const IGNORED_FLYC = new Set([
   'gohome',
   'autotakeoff',
   'autolanding',
+  'pano',
 ])
 
 /** Map raw DJI `osd.flycState` to the label on the flight card pill. */
@@ -38,6 +39,7 @@ export function flightModePillLabel(mode: string): string | null {
   }
   if (key === 'atti') return 'Atti mode'
   if (key === 'manual') return 'Manual mode'
+  if (key === 'gpsnovice') return 'Beginner mode'
 
   return null
 }

@@ -1,7 +1,8 @@
 'use client'
 
 import {useCallback, useEffect, useRef} from 'react'
-import {LngLatBounds, Map as MapLibreMap, Marker, NavigationControl} from 'maplibre-gl'
+import {createRoot, type Root} from 'react-dom/client'
+import {LngLatBounds, Map as MapLibreMap, Marker, NavigationControl, Popup} from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import '@/lib/maplibre-worker'
 import {pinViewPadding, shouldFlyToSelection, trackFitPadding} from '@/lib/map-focus'
@@ -15,6 +16,8 @@ import {
 import {FLIGHT_PATH_COLOR} from '@/lib/flight-color'
 import {trackColor} from '@/lib/track-color'
 import type {FlightSeriesSample} from '@/lib/flight-log'
+import type {RouteScrubPoint} from '@/lib/elevation'
+import {PhotoMapPopupCard} from './InfoCard'
 import {lineCoordinates, type MapData, SelectedItem} from '@/lib/sanity/types'
 import type {StyleSpecification} from 'maplibre-gl'
 
@@ -60,6 +63,7 @@ type Props = {
   /** Height of the bottom detail panel so routes fit above it. */
   panelHeight?: number
   onRegisterFlightScrub?: (handler: (sample: FlightSeriesSample | null) => void) => void
+  onRegisterRouteScrub?: (handler: (point: RouteScrubPoint | null) => void) => void
 }
 
 /** Marker for a photo that has no picture to show as a thumbnail. */
@@ -177,6 +181,15 @@ function focusSelection(
   }
   const point = selectionPoint(data, selected)
   if (!point) return
+  if (selected.kind === 'pin' && panelHeight <= 0) {
+    map.easeTo({
+      center: point,
+      offset: [0, pinDrop(map)],
+      zoom: Math.max(map.getZoom(), 11),
+      duration,
+    })
+    return
+  }
   map.easeTo({
     center: point,
     zoom: Math.max(map.getZoom(), 11),
@@ -185,10 +198,27 @@ function focusSelection(
   })
 }
 
+/** How far below the map centre a selected photo sits, leaving room for its card above it. */
+function pinDrop(map: MapLibreMap) {
+  return Math.min(170, Math.round(map.getContainer().clientHeight * 0.24))
+}
+
 function hitLayerIds(map: MapLibreMap): string[] {
   return (map.getStyle()?.layers ?? [])
     .map((layer) => layer.id)
     .filter((id) => id.startsWith('track-hit-') || id.startsWith('flight-hit-'))
+}
+
+function routeScrubMarkerEl(color: string): HTMLDivElement {
+  const el = document.createElement('div')
+  el.style.width = '14px'
+  el.style.height = '14px'
+  el.style.borderRadius = '50%'
+  el.style.background = '#fff'
+  el.style.border = `3px solid ${color}`
+  el.style.boxShadow = '0 1px 4px rgba(0,0,0,0.35)'
+  el.style.pointerEvents = 'none'
+  return el
 }
 
 function flightScrubMarkerEl(heading: number): HTMLDivElement {
@@ -215,11 +245,13 @@ export function MapCanvas({
   panelHeight = 0,
   pileMembers = null,
   onRegisterFlightScrub,
+  onRegisterRouteScrub,
 }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const markersRef = useRef<Map<string, Marker>>(new Map())
   const flightScrubRef = useRef<Marker | null>(null)
+  const routeScrubRef = useRef<Marker | null>(null)
   const onSelectRef = useRef(onSelect)
   const onPileRef = useRef(onPile)
   const onThreeDGestureRef = useRef(onThreeDGesture)
@@ -272,13 +304,40 @@ export function MapCanvas({
     flightScrubRef.current.getElement().innerHTML = flightScrubMarkerEl(sample.heading).innerHTML
   }, [])
 
+  const onRouteScrub = useCallback((point: RouteScrubPoint | null) => {
+    const map = mapRef.current
+    if (!map || !readyRef.current) return
+    if (!point) {
+      routeScrubRef.current?.remove()
+      routeScrubRef.current = null
+      return
+    }
+    const color =
+      selectedRef.current?.kind === 'track'
+        ? trackColor(dataRef.current.tracks.find((t) => t._id === selectedRef.current?.id)?.activity ?? 'other')
+        : '#2563eb'
+    if (!routeScrubRef.current) {
+      routeScrubRef.current = new Marker({element: routeScrubMarkerEl(color), anchor: 'center'})
+        .setLngLat([point.lng, point.lat])
+        .addTo(map)
+      return
+    }
+    routeScrubRef.current.setLngLat([point.lng, point.lat])
+  }, [])
+
   useEffect(() => {
     onRegisterFlightScrub?.(onFlightScrub)
   }, [onFlightScrub, onRegisterFlightScrub])
 
   useEffect(() => {
+    onRegisterRouteScrub?.(onRouteScrub)
+  }, [onRouteScrub, onRegisterRouteScrub])
+
+  useEffect(() => {
     flightScrubRef.current?.remove()
     flightScrubRef.current = null
+    routeScrubRef.current?.remove()
+    routeScrubRef.current = null
   }, [selected?.id, selected?.kind])
 
   useEffect(() => {
@@ -430,6 +489,94 @@ export function MapCanvas({
     if (!map || !readyRef.current || !pileMembers || pileMembers.length < 2) return
     fitBunchOnMap(map, data, pileMembers, panelHeight)
   }, [pileMembers, data, panelHeight])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !selected || selected.kind !== 'pin') return
+    const lngLat = selectionPoint(data, selected)
+    if (!lngLat) return
+
+    const node = document.createElement('div')
+    node.style.setProperty(
+      '--card-max',
+      `${Math.max(220, Math.round(map.getContainer().clientHeight / 2 + pinDrop(map) - 56))}px`,
+    )
+    const root: Root = createRoot(node)
+    root.render(
+      <PhotoMapPopupCard
+        data={data}
+        selected={selected}
+        onClose={() => onSelectRef.current(null)}
+      />,
+    )
+
+    const popup = new Popup({
+      closeButton: false,
+      closeOnClick: false,
+      offset: 2,
+      maxWidth: 'none',
+      className: 'tv-popup',
+      anchor: 'bottom',
+      focusAfterOpen: false,
+    })
+      .setLngLat(lngLat)
+      .setDOMContent(node)
+      .addTo(map)
+
+    const content = popup.getElement().querySelector<HTMLElement>('.maplibregl-popup-content')
+    const keepOnScreen = () => {
+      if (!content) return
+      content.style.translate = '0px 0px'
+      const card = content.getBoundingClientRect()
+      const view = map.getContainer().getBoundingClientRect()
+      const margin = 12
+      let dx = 0
+      if (card.left < view.left + margin) dx = view.left + margin - card.left
+      else if (card.right > view.right - margin) dx = view.right - margin - card.right
+      content.style.translate = `${Math.round(dx)}px 0px`
+    }
+    const popupEl = popup.getElement()
+    const canvasContainer = map.getCanvasContainer()
+    const passWheelToMap = (event: WheelEvent) => {
+      const cardEl = popupEl.querySelector('article')
+      if (cardEl && cardEl.scrollHeight > cardEl.clientHeight + 1) {
+        const atTop = cardEl.scrollTop <= 0
+        const atBottom = cardEl.scrollTop + cardEl.clientHeight >= cardEl.scrollHeight - 1
+        if (event.deltaY < 0 ? !atTop : !atBottom) return
+      }
+      event.preventDefault()
+      canvasContainer.dispatchEvent(
+        new WheelEvent('wheel', {
+          bubbles: true,
+          cancelable: true,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          deltaX: event.deltaX,
+          deltaY: event.deltaY,
+          deltaZ: event.deltaZ,
+          deltaMode: event.deltaMode,
+          ctrlKey: event.ctrlKey,
+          shiftKey: event.shiftKey,
+          altKey: event.altKey,
+          metaKey: event.metaKey,
+        }),
+      )
+    }
+    popupEl.addEventListener('wheel', passWheelToMap, {passive: false})
+
+    map.on('move', keepOnScreen)
+    const resizeWatcher = new ResizeObserver(keepOnScreen)
+    resizeWatcher.observe(node)
+    requestAnimationFrame(keepOnScreen)
+
+    return () => {
+      map.off('move', keepOnScreen)
+      popupEl.removeEventListener('wheel', passWheelToMap)
+      resizeWatcher.disconnect()
+      popup.remove()
+      queueMicrotask(() => root.unmount())
+    }
+  }, [selected, data])
 
   return <div ref={rootRef} className="isolate h-full w-full" />
 }

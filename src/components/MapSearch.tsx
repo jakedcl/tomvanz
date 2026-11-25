@@ -10,7 +10,7 @@ import {trackColor} from '@/lib/track-color'
 import {
   activeFilterCount,
   emptyMapFilters,
-  flightType,
+  filterSubRows,
   type MapFilterState,
   type ResultItem,
   type TypeOption,
@@ -22,6 +22,7 @@ type FilterGroups = {
   routeKinds: TypeOption[]
   aircraftChips: TypeOption[]
   hasDrone: boolean
+  routesExtras: TypeOption[]
 }
 
 type Props = {
@@ -34,15 +35,8 @@ type Props = {
 }
 
 export function MapSearch({state, onChange, filterGroups, results, total, onPick}: Props) {
-  const {groups, routeKinds, aircraftChips, hasDrone} = filterGroups
-  const showRouteKinds =
-    routeKinds.length > 0 &&
-    (state.types.includes('track:all') || routeKinds.some((option) => state.types.includes(option.value)))
-  const showAircraft =
-    aircraftChips.length > 0 &&
-    (state.types.includes(flightType()) ||
-      state.types.includes('flight:all') ||
-      aircraftChips.some((option) => state.types.includes(option.value)))
+  const {groups, routeKinds, aircraftChips, hasDrone, routesExtras} = filterGroups
+  const subRows = filterSubRows(state, filterGroups)
   const [open, setOpen] = useState(false)
   const count = activeFilterCount(state)
 
@@ -96,14 +90,9 @@ export function MapSearch({state, onChange, filterGroups, results, total, onPick
             </button>
           </div>
 
-          <div className="space-y-2.5 px-4 pb-3">
-            {groups.length > 0 || hasDrone ? (
+          <div className="space-y-2 px-4 pb-3">
+            {groups.length > 0 ? (
               <Chips>
-                {hasDrone ? (
-                  <Chip active={state.drone} onClick={() => onChange({...state, drone: !state.drone})}>
-                    Aerial
-                  </Chip>
-                ) : null}
                 {groups.map((option) => (
                   <Chip
                     key={option.value}
@@ -113,31 +102,43 @@ export function MapSearch({state, onChange, filterGroups, results, total, onPick
                     {option.label}
                   </Chip>
                 ))}
-                {showRouteKinds
-                  ? routeKinds.map((option) => (
-                      <Chip
-                        key={option.value}
-                        active={state.types.includes(option.value)}
-                        onClick={() => toggleType(option.value)}
-                      >
-                        {option.label}
-                      </Chip>
-                    ))
-                  : null}
-                {showAircraft
-                  ? aircraftChips.map((option) => (
-                      <Chip
-                        key={option.value}
-                        active={state.types.includes(option.value)}
-                        onClick={() => toggleType(option.value)}
-                      >
-                        {option.label}
-                      </Chip>
-                    ))
-                  : null}
               </Chips>
             ) : null}
-            <div className="flex items-center justify-between gap-2">
+            {subRows.map((row) => (
+              <div key={row.parent} className="space-y-1">
+                <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-black/40">{row.label}</p>
+                <Chips>
+                  {row.parent === 'photos' && hasDrone ? (
+                    <Chip active={state.drone} onClick={() => onChange({...state, drone: !state.drone})}>
+                      Aerial
+                    </Chip>
+                  ) : null}
+                  {row.parent === 'routes'
+                    ? [...routeKinds, ...routesExtras].map((option) => (
+                        <Chip
+                          key={option.value}
+                          active={state.types.includes(option.value)}
+                          onClick={() => toggleType(option.value)}
+                        >
+                          {option.label}
+                        </Chip>
+                      ))
+                    : null}
+                  {row.parent === 'flights'
+                    ? aircraftChips.map((option) => (
+                        <Chip
+                          key={option.value}
+                          active={state.types.includes(option.value)}
+                          onClick={() => toggleType(option.value)}
+                        >
+                          {option.label}
+                        </Chip>
+                      ))
+                    : null}
+                </Chips>
+              </div>
+            ))}
+            <div className="flex items-center justify-between gap-2 pt-0.5">
               <span />
               {count > 0 ? (
                 <button

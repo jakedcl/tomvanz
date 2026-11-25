@@ -31,6 +31,11 @@ describe('flightModePillLabel', () => {
     expect(flightModePillLabel('Landing')).toBeNull()
     expect(flightModePillLabel('TakeOff')).toBeNull()
     expect(flightModePillLabel('GoHome')).toBeNull()
+    expect(flightModePillLabel('Pano')).toBeNull()
+  })
+
+  it('maps GPSNovice to Beginner mode', () => {
+    expect(flightModePillLabel('GPSNovice')).toBe('Beginner mode')
   })
 })
 
