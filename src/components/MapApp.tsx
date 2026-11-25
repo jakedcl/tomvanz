@@ -14,6 +14,7 @@ import {
   applyMapFilters,
   emptyMapFilters,
   filterOptions,
+  normalizeMapFilters,
   resultList,
   type MapFilterState,
   type ResultItem,
@@ -41,7 +42,11 @@ type Props = {
 export function MapApp({data: allData, initialSelected = null, loadFailed = false}: Props) {
   const [selected, setSelected] = useState<SelectedItem | null>(initialSelected)
   const [searchKey, setSearchKey] = useState(0)
-  const [mapFilters, setMapFilters] = useState<MapFilterState>(emptyMapFilters)
+  const [mapFilters, setMapFiltersState] = useState<MapFilterState>(emptyMapFilters)
+  const setMapFilters = useCallback(
+    (next: MapFilterState) => setMapFiltersState(normalizeMapFilters(next)),
+    [],
+  )
   // The map follows typing a beat later, so it doesn't re-fit on every keystroke.
   const deferredFilters = useDeferredValue(mapFilters)
   const data = useMemo(() => applyMapFilters(allData, deferredFilters), [allData, deferredFilters])

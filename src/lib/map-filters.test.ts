@@ -9,6 +9,7 @@ import {
   flatTypeOptions,
   flightAircraftType,
   flightType,
+  normalizeMapFilters,
   resultList,
 } from './map-filters'
 import type {MapData} from './sanity/types'
@@ -77,7 +78,7 @@ describe('applyMapFilters', () => {
     expect(byNote.tracks).toEqual([])
   })
 
-  it('filters by route kind, which drops photos', () => {
+  it('filters by route kind without Routes parent still narrows GPX routes', () => {
     const hikes = applyMapFilters(data, {...emptyMapFilters, types: ['track:hike']})
     expect(hikes.pins).toEqual([])
     expect(hikes.tracks.map((t) => t._id)).toEqual(['t'])
@@ -99,10 +100,11 @@ describe('Photos / Routes group chips', () => {
     expect(photos.tracks).toEqual([])
   })
 
-  it('Routes keeps every route and drops photos', () => {
-    const routes = applyMapFilters(data, {...emptyMapFilters, types: ['track:all']})
+  it('Routes alone keeps GPX routes and drone flights', () => {
+    const routes = applyMapFilters(rich, {...emptyMapFilters, types: ['track:all']})
     expect(routes.pins).toEqual([])
-    expect(routes.tracks).toHaveLength(1)
+    expect(routes.tracks).toHaveLength(2)
+    expect(routes.flights).toHaveLength(2)
   })
 
   it('Photos and a specific kind of route combine', () => {
@@ -113,7 +115,7 @@ describe('Photos / Routes group chips', () => {
 })
 
 describe('drone filter', () => {
-  it('keeps only drone photos and still shows routes', () => {
+  it('keeps only drone photos and still shows all routes when nothing else is filtered', () => {
     const drone = applyMapFilters(data, {...emptyMapFilters, drone: true})
     expect(drone.pins.map((p) => p._id)).toEqual(['b'])
     expect(drone.tracks).toHaveLength(1)
@@ -151,18 +153,10 @@ describe('sub-filter narrowing', () => {
       types: ['track:all', 'track:hike'],
     })
     expect(filtered.tracks.map((t) => t._id)).toEqual(['hike1'])
+    expect(filtered.flights).toEqual([])
   })
 
-  it('Flights parent plus aircraft sub shows only that model', () => {
-    const air2 = flightAircraftType('DJI Air 2S')
-    const filtered = applyMapFilters(rich, {
-      ...emptyMapFilters,
-      types: [flightType(), air2],
-    })
-    expect(filtered.flights.map((f) => f._id)).toEqual(['f-air2'])
-  })
-
-  it('Routes then Flights alone shows flights only', () => {
+  it('Routes Flights sub shows flights only', () => {
     const filtered = applyMapFilters(rich, {
       ...emptyMapFilters,
       types: ['track:all', flightType()],
@@ -171,7 +165,7 @@ describe('sub-filter narrowing', () => {
     expect(filtered.flights).toHaveLength(2)
   })
 
-  it('Routes with Hikes and Flights shows both', () => {
+  it('Routes Hikes and Flights subs union', () => {
     const filtered = applyMapFilters(rich, {
       ...emptyMapFilters,
       types: ['track:all', 'track:hike', flightType()],
@@ -179,17 +173,46 @@ describe('sub-filter narrowing', () => {
     expect(filtered.tracks.map((t) => t._id)).toEqual(['hike1'])
     expect(filtered.flights).toHaveLength(2)
   })
+
+  it('Flights sub plus aircraft narrows drone models only', () => {
+    const air2 = flightAircraftType('DJI Air 2S')
+    const filtered = applyMapFilters(rich, {
+      ...emptyMapFilters,
+      types: ['track:all', flightType(), air2],
+    })
+    expect(filtered.tracks).toEqual([])
+    expect(filtered.flights.map((f) => f._id)).toEqual(['f-air2'])
+  })
+})
+
+describe('normalizeMapFilters', () => {
+  it('maps legacy top-level flight:all to Routes plus Flights sub', () => {
+    const normalized = normalizeMapFilters({...emptyMapFilters, types: [flightType()]})
+    expect(normalized.types).toContain('track:all')
+    expect(normalized.types).toContain(flightType())
+
+    const filtered = applyMapFilters(rich, {...emptyMapFilters, types: [flightType()]})
+    expect(filtered.tracks).toEqual([])
+    expect(filtered.flights).toHaveLength(2)
+  })
 })
 
 describe('filterOptions', () => {
-  it('only offers route kinds that exist', () => {
-    expect(flatTypeOptions(data).map((o) => o.value)).toEqual(['pin:all', 'track:all', 'track:hike'])
+  it('main row is Photos and Routes only', () => {
+    expect(filterOptions(rich).groups.map((o) => o.value)).toEqual(['pin:all', 'track:all'])
+    expect(filterOptions(rich).groups.some((o) => o.value === flightType())).toBe(false)
   })
 
-  it('keeps route kinds separate from top-level groups', () => {
-    const {groups, routeKinds} = filterOptions(data)
-    expect(groups.map((o) => o.value)).toEqual(['pin:all', 'track:all'])
-    expect(routeKinds.map((o) => o.value)).toEqual(['track:hike'])
+  it('flat list includes route subs and aircraft', () => {
+    expect(flatTypeOptions(rich).map((o) => o.value)).toEqual([
+      'pin:all',
+      'track:all',
+      'track:bike',
+      'track:hike',
+      flightType(),
+      flightAircraftType('DJI Air 2S'),
+      flightAircraftType('DJI Mini 3'),
+    ])
   })
 })
 
@@ -200,7 +223,13 @@ describe('filterSubRows', () => {
     expect(rows.map((r) => r.parent)).toEqual(['photos', 'routes'])
   })
 
-  it('orders sub-rows Photos, Routes, Flights', () => {
+  it('shows drone models row only when Flights sub is on', () => {
+    const opts = filterOptions(rich)
+    const rows = filterSubRows({...emptyMapFilters, types: ['track:all', flightType()]}, opts)
+    expect(rows.map((r) => r.parent)).toEqual(['routes', 'flights'])
+  })
+
+  it('orders rows Photos, Routes, drone models', () => {
     const opts = filterOptions(rich)
     const rows = filterSubRows(
       {
