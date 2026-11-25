@@ -67,6 +67,8 @@ type Props = {
   replay: ReplayController
   /** Asks for 3D mode on or off (the map puts it back how it was when a replay ends). */
   onRequestThreeD: (on: boolean) => void
+  /** The person dragged the map (not a move the app made), e.g. to lower the phone sheet. */
+  onUserPan?: () => void
 }
 
 /** Marker for a photo that has no picture to show as a thumbnail. */
@@ -297,6 +299,7 @@ export function MapCanvas({
   pileMembers = null,
   replay,
   onRequestThreeD,
+  onUserPan,
 }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
@@ -306,6 +309,7 @@ export function MapCanvas({
   const flyoverRef = useRef<FlyoverHandle | null>(null)
   const replayRef = useRef(replay)
   const onRequestThreeDRef = useRef(onRequestThreeD)
+  const onUserPanRef = useRef(onUserPan)
   const onSelectRef = useRef(onSelect)
   const onPileRef = useRef(onPile)
   const onThreeDGestureRef = useRef(onThreeDGesture)
@@ -334,7 +338,8 @@ export function MapCanvas({
     threeDRef.current = threeD
     replayRef.current = replay
     onRequestThreeDRef.current = onRequestThreeD
-  }, [selected, onSelect, onPile, onThreeDGesture, onMapError, data, threeD, replay, onRequestThreeD])
+    onUserPanRef.current = onUserPan
+  }, [selected, onSelect, onPile, onThreeDGesture, onMapError, data, threeD, replay, onRequestThreeD, onUserPan])
 
   const pinCtx = (): PinRenderCtx => ({
     data: dataRef.current,
@@ -437,6 +442,7 @@ export function MapCanvas({
         isThreeD: () => threeDRef.current,
         replay: replayRef.current,
         requestThreeD: (on) => onRequestThreeDRef.current(on),
+        getBottomInset: () => panelHeightRef.current,
         fallbackMarker: fallbackMarker(),
       })
       // The first draw fits everything in view; later redraws (search, filters) leave the camera alone.
@@ -451,6 +457,13 @@ export function MapCanvas({
       attrib?.removeAttribute('open')
     })
     map.on('moveend', () => renderPins(map, pinCtx(), markersRef, false))
+    // A drag with a hand (not a move the app made) means the person is looking around.
+    map.on('dragstart', (event) => {
+      if (event.originalEvent) onUserPanRef.current?.()
+    })
+    // The map's box changes size when the sidebar opens or closes: keep it filling the box.
+    const resizeObserver = new ResizeObserver(() => map.resize())
+    resizeObserver.observe(node)
     // Tilting the map by hand (right-click or Ctrl drag, two-finger tilt) is asking for 3D.
     // Only gestures count: programmatic moves have no originalEvent.
     map.on('pitch', (event) => {
@@ -461,6 +474,7 @@ export function MapCanvas({
     })
 
     return () => {
+      resizeObserver.disconnect()
       flyoverRef.current?.dispose()
       flyoverRef.current = null
       markersRef.current.forEach((marker) => marker.remove())

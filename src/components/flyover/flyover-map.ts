@@ -40,6 +40,8 @@ export type FlyoverDeps = {
   replay: ReplayController
   /** Turns 3D mode off or on (used to put the map back how it was when a replay ends). */
   requestThreeD: (on: boolean) => void
+  /** Pixels at the bottom of the map that something (the phone sheet) covers, so the marker is kept above it. */
+  getBottomInset?: () => number
   /** Draws the replay marker with plain DOM, if the 3D layer can't be used (no WebGL2, failed to load). */
   fallbackMarker: {show: (frame: ReplayFrame) => void; hide: () => void}
 }
@@ -357,6 +359,8 @@ export function createFlyover(map: MapLibreMap, deps: FlyoverDeps): FlyoverHandl
   let introPending = false
   let wasPlaying = false
 
+  const bottomPadding = () => ({top: 0, left: 0, right: 0, bottom: Math.max(0, deps.getBottomInset?.() ?? 0)})
+
   const currentPose = (): CameraPose => {
     const c = map.getCenter()
     return {lng: c.lng, lat: c.lat, elevation: map.getCenterElevation(), bearing: map.getBearing(), pitch: map.getPitch(), zoom: map.getZoom()}
@@ -422,7 +426,14 @@ export function createFlyover(map: MapLibreMap, deps: FlyoverDeps): FlyoverHandl
     const lift = cameraLift(stepped)
     const pose = lift > 0 ? {...stepped, elevation: stepped.elevation + lift} : stepped
     if (lift > 0) follower.pose = pose
-    map.jumpTo({center: [pose.lng, pose.lat], elevation: pose.elevation, bearing: pose.bearing, pitch: pose.pitch, zoom: pose.zoom})
+    map.jumpTo({
+      center: [pose.lng, pose.lat],
+      elevation: pose.elevation,
+      bearing: pose.bearing,
+      pitch: pose.pitch,
+      zoom: pose.zoom,
+      padding: bottomPadding(),
+    })
     return target
   }
 
@@ -477,6 +488,7 @@ export function createFlyover(map: MapLibreMap, deps: FlyoverDeps): FlyoverHandl
       duration: durationMs,
       curve: 1.25,
       essential: true,
+      padding: bottomPadding(),
     })
   }
 
