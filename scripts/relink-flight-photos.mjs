@@ -2,14 +2,14 @@
 /**
  * Re-run flight ↔ photo time-window linking for photos that have no flight reference yet.
  *
- *   node --experimental-strip-types scripts/relink-flight-photos.mjs --dry-run
+ *   node --experimental-strip-types scripts/relink-flight-photos.mjs
  *   SANITY_TOMVANZ_WRITE_TOKEN=… node --experimental-strip-types scripts/relink-flight-photos.mjs --apply
  *
  * Dry run is the default (no --apply). Never prints tokens.
  */
 
 import {createClient} from '@sanity/client'
-import {linkPhotosToFlightDocument} from '../src/lib/link-flight-photos.ts'
+import {planPhotoLinks} from '../src/lib/flight-photo-link.ts'
 
 const projectId = process.env.NEXT_PUBLIC_SANITY_PROJECT_ID ?? 'lee2r8sa'
 const dataset = process.env.NEXT_PUBLIC_SANITY_DATASET ?? 'production'
@@ -26,6 +26,13 @@ const FLIGHTS_QUERY = `*[_type == "flight" && defined(startedAt) && defined(dura
   startedAt,
   durationSeconds
 } | order(startedAt desc)`
+
+const CANDIDATES_QUERY = `*[_type == "photo" && !defined(flight)]{
+  _id,
+  takenAt,
+  "fileName": image.asset->originalFilename,
+  "exifDateTimeOriginal": image.asset->metadata.exif.DateTimeOriginal
+}`
 
 async function main() {
   if (!writeToken && apply) {
@@ -49,59 +56,52 @@ async function main() {
 
   console.log(`${apply ? 'Applying' : 'Dry run'}: ${flights.length} flight(s) on ${dataset}.`)
 
-  let totalLinked = 0
-  let totalUnlinkedLabels = 0
+  const candidates = await client.fetch(CANDIDATES_QUERY)
+  let totalLinkAttempts = 0
+  const unlinkedLabels = new Set()
 
   for (const flight of flights) {
-    if (!apply) {
-      const {planPhotoLinks} = await import('../src/lib/flight-photo-link.ts')
-      const candidates = await client.fetch(
-        `*[_type == "photo" && !defined(flight)]{
-          _id,
-          takenAt,
-          "fileName": image.asset->originalFilename,
-          "exifDateTimeOriginal": image.asset->metadata.exif.DateTimeOriginal
-        }`,
-      )
-      const {linkIds, unlinkedLabels} = planPhotoLinks(
-        candidates,
-        flight.startedAt,
-        flight.durationSeconds,
-      )
-      if (linkIds.length || unlinkedLabels.length) {
-        console.log(
-          `  ${flight.title || flight._id}: would link ${linkIds.length} photo(s)` +
-            (unlinkedLabels.length ? `; ${unlinkedLabels.length} drone photo(s) still without time` : ''),
-        )
-      }
-      totalLinked += linkIds.length
-      totalUnlinkedLabels += unlinkedLabels.length
-      continue
-    }
-
-    const {unlinkedLabels} = await linkPhotosToFlightDocument(
-      client,
-      flight._id,
+    const {linkIds, unlinkedLabels: flightUnlinked} = planPhotoLinks(
+      candidates,
       flight.startedAt,
       flight.durationSeconds,
     )
-    const linkedThisPass = await client.fetch(
-      `count(*[_type == "photo" && references($id)])`,
-      {id: flight._id},
+    if (!apply) {
+      if (linkIds.length || flightUnlinked.length) {
+        console.log(
+          `  ${flight.title || flight._id}: would link ${linkIds.length} photo(s)` +
+            (flightUnlinked.length
+              ? `; ${flightUnlinked.length} drone photo(s) still without time this pass`
+              : ''),
+        )
+      }
+      totalLinkAttempts += linkIds.length
+      for (const label of flightUnlinked) unlinkedLabels.add(label)
+      continue
+    }
+
+    await Promise.all(
+      linkIds.map((id) =>
+        client.patch(id).set({flight: {_type: 'reference', _ref: flight._id}}).commit(),
+      ),
     )
-    console.log(
-      `  ${flight.title || flight._id}: ${linkedThisPass} photo(s) reference this flight` +
-        (unlinkedLabels.length ? `; could not time: ${unlinkedLabels.join(', ')}` : ''),
-    )
-    totalUnlinkedLabels += unlinkedLabels.length
+    if (linkIds.length || flightUnlinked.length) {
+      console.log(
+        `  ${flight.title || flight._id}: linked ${linkIds.length} photo(s)` +
+          (flightUnlinked.length ? `; could not time: ${flightUnlinked.join(', ')}` : ''),
+      )
+    }
+    for (const label of flightUnlinked) unlinkedLabels.add(label)
   }
 
   if (!apply) {
-    console.log(`Would attempt up to ${totalLinked} new link(s) across flights (per-flight plan).`)
-    if (totalUnlinkedLabels) {
-      console.log(`${totalUnlinkedLabels} drone file name(s) still lack a usable timestamp.`)
+    console.log(`Would attempt up to ${totalLinkAttempts} new link(s) across flights (per-flight plan).`)
+    if (unlinkedLabels.size) {
+      console.log(`${unlinkedLabels.size} unique drone photo(s) still lack a usable timestamp.`)
     }
     console.log('Pass --apply to write patches.')
+  } else if (unlinkedLabels.size) {
+    console.log(`${unlinkedLabels.size} unique drone photo(s) still lack a usable timestamp.`)
   }
 }
 

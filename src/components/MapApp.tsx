@@ -18,7 +18,7 @@ import {
   type ResultItem,
 } from '@/lib/map-filters'
 import type {BunchMember} from '@/lib/map-bunch'
-import type {MapData, PinDoc, SelectedItem} from '@/lib/sanity/types'
+import type {MapData, SelectedItem} from '@/lib/sanity/types'
 
 const MapCanvas = dynamic(() => import('./MapCanvas').then((mod) => mod.MapCanvas), {
   ssr: false,
@@ -91,15 +91,6 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
     setPileIndex(0)
     setPileMembers(members)
   }, [])
-
-  const pilePins = useMemo(() => {
-    if (!pileMembers) return null
-    const byId = new Map(data.pins.map((pin) => [pin._id, pin]))
-    return pileMembers
-      .filter((m) => m.kind === 'pin')
-      .map((m) => byId.get(m.id))
-      .filter((pin): pin is PinDoc => Boolean(pin))
-  }, [pileMembers, data])
 
   // Keep the address bar pointing at whatever is open, so the link can be shared.
   useEffect(() => {

@@ -248,7 +248,7 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: 
   }
 
   const frame =
-    'tv-card tv-sheet w-full max-h-[min(42vh,240px)] overflow-y-auto overflow-x-hidden rounded-t-[18px] bg-white shadow-[0_-6px_28px_rgba(0,0,0,0.18)] ring-1 ring-black/5 md:rounded-[18px] md:shadow-[0_16px_48px_rgba(0,0,0,0.22)]'
+    'tv-card tv-sheet w-full overflow-x-hidden rounded-t-[18px] bg-white shadow-[0_-6px_28px_rgba(0,0,0,0.18)] ring-1 ring-black/5 md:rounded-[18px] md:shadow-[0_16px_48px_rgba(0,0,0,0.22)]'
 
   const untitled = card.title.trim() === ''
   const headline = untitled ? (card.stats[0] ?? '') : card.title
@@ -259,11 +259,7 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: 
     isFlight && flightSeries && flightSeries.length > 0 ? maxSpeedMphFromSeries(flightSeries) : null
   const modePill =
     isFlight && flightSeries && flightSeries.length > 0 ? dominantFlightModePill(flightSeries) : null
-  const chips = [
-    ...baseChips,
-    ...(topSpeed != null ? [formatSpeedMph(topSpeed)] : []),
-    ...(modePill ? [modePill] : []),
-  ]
+  const detailLine = baseChips.join(' · ')
   const linkedForSelection =
     selected.kind === 'flight' || selected.kind === 'track' ? linkedPhotos : []
   const thumbSrc = cover
@@ -291,8 +287,22 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: 
                   {headline}
                 </h2>
               ) : null}
-              {chips.length > 0 ? (
-                <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-black/60">{chips.join(' · ')}</p>
+              {detailLine ? (
+                <p className="mt-1 line-clamp-1 text-[12px] leading-snug text-black/60">{detailLine}</p>
+              ) : null}
+              {isFlight && (topSpeed != null || modePill) ? (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  {topSpeed != null ? (
+                    <span className="shrink-0 rounded-full bg-black/[0.06] px-2.5 py-0.5 text-[11px] font-medium text-black/70">
+                      {formatSpeedMph(topSpeed)}
+                    </span>
+                  ) : null}
+                  {modePill ? (
+                    <span className="shrink-0 rounded-full bg-black/[0.06] px-2.5 py-0.5 text-[11px] font-medium text-black/70">
+                      {modePill}
+                    </span>
+                  ) : null}
+                </div>
               ) : null}
               {card.body ? (
                 <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-black/65">{card.body}</p>
@@ -346,7 +356,7 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onOpenPhoto}: 
       ) : null}
       {hasRoute && routeCoords ? (
         <div className="px-3 pb-2">
-          <ElevationChart coords={routeCoords} color={card.accent} />
+          <ElevationChart compact coords={routeCoords} color={card.accent} />
         </div>
       ) : null}
       {isFlight && flight && onFlightScrub ? (

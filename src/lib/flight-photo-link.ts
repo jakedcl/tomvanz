@@ -1,4 +1,4 @@
-import {effectiveTakenAt} from './photo-taken-at'
+import {effectiveTakenAt} from './photo-taken-at.ts'
 
 /** Seconds before flight start when a photo still links. */
 export const PHOTO_LINK_PADDING_BEFORE_SEC = 5

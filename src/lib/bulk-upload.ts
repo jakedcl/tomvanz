@@ -1,7 +1,10 @@
 import exifr from 'exifr'
 
 import {isFlightLogFileName, type ParsedFlightLog} from './flight-log'
+import {plausibleTime} from './plausible-time'
 import {prepareRouteDisplayFields, type LngLat} from './simplify-route'
+
+export {plausibleTime} from './plausible-time'
 
 /** What the bulk uploader pulls out of a photo file. */
 export type PhotoMeta = {
@@ -36,13 +39,6 @@ export async function readPhotoMeta(input: Blob | ArrayBuffer | Uint8Array): Pro
   const takenAt = plausibleTime(when instanceof Date ? when : when ? new Date(when) : null)
   if (takenAt) meta.takenAt = takenAt
   return meta
-}
-
-/** An ISO date-time, or nothing for obviously bogus clocks (devices that were never set report 1970 or 2000). */
-export function plausibleTime(date: Date | null | undefined): string | undefined {
-  if (!date || Number.isNaN(date.getTime())) return undefined
-  if (date.getFullYear() < 2005 || date.getTime() > Date.now() + 86_400_000) return undefined
-  return date.toISOString()
 }
 
 const PHOTO_EXTENSIONS = /\.(jpe?g|png|heic|heif|webp|tiff?)$/i

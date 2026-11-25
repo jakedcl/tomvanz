@@ -1,4 +1,4 @@
-import {plausibleTime} from './bulk-upload'
+import {plausibleTime} from './plausible-time.ts'
 
 /** DJI Fly export: `dji_fly_YYYYMMDD_HHMMSS_…` (local America/New_York). */
 const DJI_FLY = /dji_fly_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/i
