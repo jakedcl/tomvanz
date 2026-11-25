@@ -64,6 +64,8 @@ type Props = {
   panelHeight?: number
   /** The replay of the open flight or route: the marker and the follow camera come from it. */
   replay: ReplayController
+  /** Asks for 3D mode on or off (the map puts it back how it was when a replay ends). */
+  onRequestThreeD: (on: boolean) => void
 }
 
 /** Marker for a photo that has no picture to show as a thumbnail. */
@@ -245,6 +247,7 @@ export function MapCanvas({
   panelHeight = 0,
   pileMembers = null,
   replay,
+  onRequestThreeD,
 }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
@@ -253,6 +256,7 @@ export function MapCanvas({
   const fallbackMarkerRef = useRef<Marker | null>(null)
   const flyoverRef = useRef<FlyoverHandle | null>(null)
   const replayRef = useRef(replay)
+  const onRequestThreeDRef = useRef(onRequestThreeD)
   const onSelectRef = useRef(onSelect)
   const onPileRef = useRef(onPile)
   const onThreeDGestureRef = useRef(onThreeDGesture)
@@ -280,7 +284,8 @@ export function MapCanvas({
     dataRef.current = data
     threeDRef.current = threeD
     replayRef.current = replay
-  }, [selected, onSelect, onPile, onThreeDGesture, onMapError, data, threeD, replay])
+    onRequestThreeDRef.current = onRequestThreeD
+  }, [selected, onSelect, onPile, onThreeDGesture, onMapError, data, threeD, replay, onRequestThreeD])
 
   const pinCtx = (): PinRenderCtx => ({
     data: dataRef.current,
@@ -397,6 +402,7 @@ export function MapCanvas({
         getSelected: () => selectedRef.current,
         isThreeD: () => threeDRef.current,
         replay: replayRef.current,
+        requestThreeD: (on) => onRequestThreeDRef.current(on),
         fallbackMarker: fallbackMarker(),
       })
       // The first draw fits everything in view; later redraws (search, filters) leave the camera alone.

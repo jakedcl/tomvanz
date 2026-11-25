@@ -253,6 +253,11 @@ export class FlyoverLayer implements CustomLayerInterface {
     return this.built.size
   }
 
+  /** The flights that currently have a tube. */
+  tubeIds(): string[] {
+    return [...this.built.keys()]
+  }
+
   render(_gl: WebGL2RenderingContext, args: CustomRenderMethodInput) {
     const map = this.map
     const renderer = this.renderer

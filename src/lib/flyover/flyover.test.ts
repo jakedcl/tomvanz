@@ -398,6 +398,27 @@ describe('ReplayController', () => {
     expect(controller.getState().playing).toBe(false)
   })
 
+  it('says when a replay plays to its end, once, and not for a pause, a scrub or a reload', () => {
+    const {controller, advance} = rig()
+    controller.load(flight())
+    let ended = 0
+    controller.subscribeEnded(() => (ended += 1))
+    controller.setSpeed(16)
+    controller.play()
+    advance(2000, 40)
+    controller.pause()
+    controller.seekFraction(1)
+    controller.load(flight())
+    expect(ended).toBe(0)
+    controller.setSpeed(16)
+    controller.play()
+    advance(20000, 400)
+    expect(ended).toBe(1)
+    expect(controller.getState().playing).toBe(false)
+    advance(5000, 50)
+    expect(ended).toBe(1)
+  })
+
   it('hide() takes the marker away but keeps the path', () => {
     const {controller} = rig()
     controller.load(flight())

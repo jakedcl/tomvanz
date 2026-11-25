@@ -61,6 +61,7 @@ export class ReplayController {
   private state: ReplayState = IDLE_STATE
   private frameListeners = new Set<(frame: ReplayFrame) => void>()
   private stateListeners = new Set<() => void>()
+  private endedListeners = new Set<() => void>()
   private rafId: number | null = null
   private lastNow = 0
   private readonly now: () => number
@@ -102,6 +103,12 @@ export class ReplayController {
   subscribeState(listener: () => void): () => void {
     this.stateListeners.add(listener)
     return () => void this.stateListeners.delete(listener)
+  }
+
+  /** Called when a replay plays all the way to its end (not when it's paused, scrubbed, closed or reloaded). */
+  subscribeEnded(listener: () => void): () => void {
+    this.endedListeners.add(listener)
+    return () => void this.endedListeners.delete(listener)
   }
 
   /** Loads a new path (or none). Everything starts over, paused, at the speed that suits its length. */
@@ -199,6 +206,7 @@ export class ReplayController {
     this.stopLoop()
     this.frameListeners.clear()
     this.stateListeners.clear()
+    this.endedListeners.clear()
   }
 
   private setState(next: ReplayState) {
@@ -227,6 +235,7 @@ export class ReplayController {
         this.t = this.track.durationSeconds
         this.setState({...this.state, playing: false})
         this.emitFrame()
+        for (const listener of [...this.endedListeners]) listener()
         return
       }
       this.emitFrame()

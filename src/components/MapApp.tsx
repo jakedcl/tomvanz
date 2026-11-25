@@ -170,6 +170,7 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
           onMapError={() => setMapFailed(true)}
           panelHeight={stripOpen ? panelHeight : 0}
           replay={replay}
+          onRequestThreeD={changeThreeD}
         />
       )}
       {!mapFailed ? (

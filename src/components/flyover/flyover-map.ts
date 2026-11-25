@@ -15,12 +15,18 @@ export const TUBE_MIN_PITCH = 20
 const MAX_TUBES = 60
 /** How far past the edge of the screen (as a share of its size) flights still get tubes, so panning feels solid. */
 const VIEW_PADDING = 0.25
+/** While the map keeps moving (the follow camera never stops), the tubes are still brought up to date this often. */
+const MAX_SYNC_WAIT_MS = 500
+/** How long the camera takes to glide back to where it was when a replay ends. */
+const RETURN_DURATION_MS = 1800
 
 export type FlyoverDeps = {
   getData: () => MapData
   getSelected: () => SelectedItem | null
   isThreeD: () => boolean
   replay: ReplayController
+  /** Turns 3D mode off or on (used to put the map back how it was when a replay ends). */
+  requestThreeD: (on: boolean) => void
   /** Draws the replay marker with plain DOM, if the 3D layer can't be used (no WebGL2, failed to load). */
   fallbackMarker: {show: (frame: ReplayFrame) => void; hide: () => void}
 }
@@ -136,6 +142,7 @@ export function createFlyover(map: MapLibreMap, deps: FlyoverDeps): FlyoverHandl
     if (disposed) return
     if (!tubesWanted()) {
       layer?.setFlights([])
+      applyLineVisibility()
       return
     }
     const active = await ensureLayer()
@@ -151,11 +158,40 @@ export function createFlyover(map: MapLibreMap, deps: FlyoverDeps): FlyoverHandl
       items.push({id: flight._id, points: track ?? fallbackTrack(flight)})
     }
     active.setFlights(items)
+    applyLineVisibility()
   }
 
+  let syncDueSince = 0
   const scheduleSync = (delay = 120) => {
+    const now = performance.now()
     if (syncTimer) clearTimeout(syncTimer)
-    syncTimer = setTimeout(() => void syncTubesNow(), delay)
+    else syncDueSince = now
+    // Keep postponing while the map moves, but never longer than MAX_SYNC_WAIT_MS in all.
+    const wait = Math.max(0, Math.min(delay, syncDueSince + MAX_SYNC_WAIT_MS - now))
+    syncTimer = setTimeout(() => {
+      syncTimer = null
+      void syncTubesNow()
+    }, wait)
+  }
+
+  // ---- The flat lines ----
+
+  /**
+   * A flight that has a floating tube doesn't also keep its flat line (and click target) on the ground under
+   * it. Flights without a tube (not built yet, or flat 2D) keep theirs, and they all come back with 2D.
+   */
+  function applyLineVisibility() {
+    const withTube = tubesWanted() && layer ? new Set(layer.tubeIds()) : new Set<string>()
+    for (const flight of deps.getData().flights) {
+      const visibility = withTube.has(flight._id) ? 'none' : 'visible'
+      for (const prefix of ['flight-line-', 'flight-casing-', 'flight-hit-']) {
+        const id = `${prefix}${flight._id}`
+        if (!map.getLayer(id)) continue
+        if ((map.getLayoutProperty(id, 'visibility') ?? 'visible') !== visibility) {
+          map.setLayoutProperty(id, 'visibility', visibility)
+        }
+      }
+    }
   }
 
   // ---- Replay marker ----
@@ -231,19 +267,61 @@ export function createFlyover(map: MapLibreMap, deps: FlyoverDeps): FlyoverHandl
     followRaf = requestAnimationFrame(followStep)
   }
 
-  function stopFollow() {
+  function stopFollow(restoreClamp = true) {
     following = false
     if (followRaf !== null) cancelAnimationFrame(followRaf)
     followRaf = null
-    if (clampedOff) {
+    if (restoreClamp && clampedOff) {
       map.setCenterClampedToGround(true)
       clampedOff = false
     }
   }
 
+  // ---- Coming back ----
+
+  /** Where the camera (and which dimension) was when Play was pressed, to put it back when the replay ends. */
+  let returnPoint: {pose: CameraPose; threeD: boolean} | null = null
+  /** The camera has been sent back: don't follow the marker again until Play (or a scrub from a fresh start). */
+  let returned = false
+
+  function returnToStart() {
+    const point = returnPoint
+    returnPoint = null
+    if (!point || disposed) return
+    returned = true
+    const state = replay.getState()
+    // Only take the camera back if it was ours (a person who took over keeps what they set up).
+    if (!state.following && !state.reducedMotion) return
+    const turnOff = () => {
+      if (!point.threeD && deps.isThreeD()) deps.requestThreeD(false)
+    }
+    if (state.reducedMotion || !following) {
+      turnOff()
+      return
+    }
+    // Glide back, still looking from the aircraft's height so there's no jump, then let the ground take over.
+    stopFollow(false)
+    map.once('moveend', () => {
+      if (clampedOff) {
+        map.setCenterClampedToGround(true)
+        clampedOff = false
+      }
+      turnOff()
+    })
+    map.easeTo({
+      center: [point.pose.lng, point.pose.lat],
+      elevation: point.pose.elevation,
+      bearing: point.pose.bearing,
+      pitch: point.pose.pitch,
+      zoom: point.pose.zoom,
+      duration: RETURN_DURATION_MS,
+      essential: true,
+    })
+  }
+
   function evaluateFollow() {
     const state = replay.getState()
-    const should = state.visible && state.following && !state.reducedMotion && deps.isThreeD()
+    const should = state.visible && state.following && !state.reducedMotion && deps.isThreeD() && !returned
     if (should) {
       if (!following) startFollow()
       else if (followRaf === null) followRaf = requestAnimationFrame(followStep)
@@ -255,6 +333,9 @@ export function createFlyover(map: MapLibreMap, deps: FlyoverDeps): FlyoverHandl
   // ---- Wiring ----
 
   const onFrame = (frame: ReplayFrame) => {
+    // Pressing Play: remember how things were (this runs inside the click, before 3D switches on or the camera moves).
+    if (frame.playing) returned = false
+    if (frame.playing && !returnPoint) returnPoint = {pose: currentPose(), threeD: deps.isThreeD()}
     if (!frame.visible) {
       layer?.setMarker(null)
       deps.fallbackMarker.hide()
@@ -278,7 +359,15 @@ export function createFlyover(map: MapLibreMap, deps: FlyoverDeps): FlyoverHandl
   }
 
   const unsubscribeFrames = replay.subscribeFrames(onFrame)
-  const unsubscribeState = replay.subscribeState(evaluateFollow)
+  const unsubscribeState = replay.subscribeState(() => {
+    // Closing the card or opening another flight forgets where to come back to.
+    if (!replay.getState().visible && !replay.getState().playing) {
+      returnPoint = null
+      returned = false
+    }
+    evaluateFollow()
+  })
+  const unsubscribeEnded = replay.subscribeEnded(returnToStart)
 
   // Any hand on the camera takes it over. These are real input events on the map (MapLibre's own gesture events
   // don't all say where they came from, and wheel zoom doesn't), so touch, mouse, wheel and keys all count.
@@ -296,7 +385,11 @@ export function createFlyover(map: MapLibreMap, deps: FlyoverDeps): FlyoverHandl
   map.on('idle', onTerrainIdle)
 
   return {
-    sync: () => scheduleSync(0),
+    sync: () => {
+      // The flat lines may have just been redrawn (a filter changed): hide the ones that have tubes right away.
+      applyLineVisibility()
+      scheduleSync(0)
+    },
     pickFlight: (x, y) => (layer && tubesWanted() ? layer.pick(x, y) : null),
     dispose: () => {
       disposed = true
@@ -304,11 +397,13 @@ export function createFlyover(map: MapLibreMap, deps: FlyoverDeps): FlyoverHandl
       stopFollow()
       unsubscribeFrames()
       unsubscribeState()
+      unsubscribeEnded()
       for (const type of TAKEOVER_EVENTS) container.removeEventListener(type, takeOver, {capture: true})
       map.off('moveend', onViewChange)
       map.off('idle', onTerrainIdle)
       if (layer && map.getLayer(layer.id)) map.removeLayer(layer.id)
       layer = null
+      returnPoint = null
     },
   }
 }
