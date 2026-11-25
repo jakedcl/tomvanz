@@ -69,16 +69,26 @@ export function ResultsList({
   total,
   onPick,
   listRef,
+  countLabel,
+  activeKey,
 }: {
   results: ResultItem[]
   total: number
   onPick: (item: ResultItem) => void
   listRef?: React.Ref<HTMLDivElement>
+  /** Replaces the "N on the map" line (for a stack of photos: "2 of 6"). */
+  countLabel?: string
+  /** The row to mark as the current one, as `${kind}-${id}` (kept in view). */
+  activeKey?: string
 }) {
+  const activeRow = useRef<HTMLLIElement | null>(null)
+  useEffect(() => {
+    activeRow.current?.scrollIntoView({block: 'nearest'})
+  }, [activeKey])
   return (
     <>
       <p className="px-4 pb-1.5 text-[12px] text-black/45">
-        {results.length === total ? `${total} on the map` : `${results.length} of ${total}`}
+        {countLabel ?? (results.length === total ? `${total} on the map` : `${results.length} of ${total}`)}
       </p>
       <div
         ref={listRef}
@@ -93,7 +103,12 @@ export function ResultsList({
               const date = formatMapDate(item.date)
               const meta = [item.label, date, item.miles ? formatMiles(item.miles) : null].filter(Boolean).join(' · ')
               return (
-                <li key={`${item.kind}-${item.id}`}>
+                <li
+                  key={`${item.kind}-${item.id}`}
+                  ref={`${item.kind}-${item.id}` === activeKey ? activeRow : undefined}
+                  className={`${item.kind}-${item.id}` === activeKey ? 'bg-black/[0.06]' : undefined}
+                  aria-current={`${item.kind}-${item.id}` === activeKey ? 'true' : undefined}
+                >
                   <button
                     type="button"
                     onClick={() => onPick(item)}

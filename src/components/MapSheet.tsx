@@ -4,6 +4,7 @@ import {useCallback, useEffect, useRef, useState, type KeyboardEvent, type Point
 import {
   dragHeight,
   estimateVelocity,
+  keyboardLayout,
   listGestureOwner,
   settleSnap,
   snapHeights,
@@ -40,6 +41,9 @@ export function MapSheet({
   const probeRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState({container: 0, safe: 0})
   const heights = snapHeights(size.container || 700, size.safe)
+  // With the on-screen keyboard up, the sheet rises onto it and fills the room above, so the search bar is at the
+  // top of what's visible and more results show.
+  const [keyboard, setKeyboard] = useState({open: false, bottom: 0, height: 0})
   // The drag handlers below outlive a render, so they read the latest values from here.
   const heightsRef = useRef(heights)
   const snapRef = useRef(snap)
@@ -66,6 +70,30 @@ export function MapSheet({
     const observer = new ResizeObserver(measure)
     observer.observe(container)
     return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    const viewport = window.visualViewport
+    const container = sheetRef.current?.parentElement
+    if (!viewport || !container) return
+    const update = () => {
+      const next = keyboardLayout({
+        layoutHeight: window.innerHeight,
+        viewportHeight: viewport.height,
+        viewportOffsetTop: viewport.offsetTop,
+        containerHeight: container.clientHeight,
+      })
+      setKeyboard((current) =>
+        current.open === next.open && current.bottom === next.bottom && current.height === next.height ? current : next,
+      )
+    }
+    update()
+    viewport.addEventListener('resize', update)
+    viewport.addEventListener('scroll', update)
+    return () => {
+      viewport.removeEventListener('resize', update)
+      viewport.removeEventListener('scroll', update)
+    }
   }, [])
 
   const restingHeight = heights[snap]
@@ -97,6 +125,7 @@ export function MapSheet({
 
   const onPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
     const target = event.target as HTMLElement
+    if (keyboard.open) return // the sheet is parked above the keyboard
     // The search box and other controls are for tapping, not for dragging the sheet.
     if (target.closest('input, textarea, a, select, button:not([data-sheet-handle])')) return
     const el = sheetRef.current
@@ -238,7 +267,7 @@ export function MapSheet({
     <section
       ref={sheetRef}
       aria-label="Map results"
-      style={{height: restingHeight}}
+      style={keyboard.open ? {height: keyboard.height, bottom: keyboard.bottom, paddingBottom: 0} : {height: restingHeight}}
       className="absolute inset-x-0 bottom-0 z-30 flex flex-col overflow-hidden rounded-t-[22px] bg-white pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_32px_rgba(0,0,0,0.22)] transition-[height] duration-200 ease-out motion-reduce:transition-none"
     >
       {/* Measures the home-bar space (zero where there is none). */}
@@ -268,7 +297,7 @@ export function MapSheet({
         </div>
         <div className="flex items-center gap-2 px-4 pb-3">{header}</div>
       </div>
-      <div ref={bodyRef} inert={snap === 'peek'} className="flex min-h-0 flex-1 flex-col">
+      <div ref={bodyRef} inert={snap === 'peek' && !keyboard.open} className="flex min-h-0 flex-1 flex-col">
         {children}
       </div>
     </section>

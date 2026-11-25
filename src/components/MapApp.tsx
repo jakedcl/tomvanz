@@ -185,12 +185,49 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
       onOpenPhoto={(id) => select({kind: 'pin', id})}
     />
   ) : null
-  const listBody = (
-    <>
-      <FilterPills state={mapFilters} onChange={setMapFilters} filterGroups={options} />
-      <ResultsList results={results} total={total} onPick={pickResult} />
-    </>
-  )
+  // A stack of items at one spot (the "1 of 6" strip): the panel lists just those, with the current one marked.
+  const pileResults = useMemo(() => {
+    if (!pileMembers || pileMembers.length < 2) return null
+    return pileMembers.flatMap((member) =>
+      resultList(
+        {
+          ...data,
+          pins: data.pins.filter((item) => member.kind === 'pin' && item._id === member.id),
+          tracks: data.tracks.filter((item) => member.kind === 'track' && item._id === member.id),
+          flights: data.flights.filter((item) => member.kind === 'flight' && item._id === member.id),
+        },
+        (track) => trackMiles(track),
+      ),
+    )
+  }, [pileMembers, data])
+  const currentPileMember = pileMembers?.[pileIndex]
+  const listBody =
+    pileResults && pileResults.length > 1 ? (
+      <>
+        <div className="flex items-center justify-between px-4 pb-2 pt-1">
+          <p className="text-[14px] font-semibold">Stacked here</p>
+          <button
+            type="button"
+            onClick={() => select(null)}
+            className="text-[12px] font-semibold text-black/60 underline underline-offset-2"
+          >
+            Show all
+          </button>
+        </div>
+        <ResultsList
+          results={pileResults}
+          total={pileResults.length}
+          onPick={pickResult}
+          countLabel={`${pileIndex + 1} of ${pileResults.length}`}
+          activeKey={currentPileMember ? `${currentPileMember.kind}-${currentPileMember.id}` : undefined}
+        />
+      </>
+    ) : (
+      <>
+        <FilterPills state={mapFilters} onChange={setMapFilters} filterGroups={options} />
+        <ResultsList results={results} total={total} onPick={pickResult} />
+      </>
+    )
 
   return (
     <div

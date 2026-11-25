@@ -4,6 +4,7 @@ import {
   dragHeight,
   estimateVelocity,
   FLICK_VELOCITY,
+  keyboardLayout,
   listGestureOwner,
   PEEK_CONTENT_PX,
   settleSnap,
@@ -147,5 +148,38 @@ describe('listGestureOwner', () => {
 
   it('a small overscroll at the top still counts as the top', () => {
     expect(listGestureOwner({scrollTop: -3, dy: 12})).toBe('sheet')
+  })
+})
+
+describe('keyboardLayout', () => {
+  const base = {layoutHeight: 800, containerHeight: 704, viewportOffsetTop: 0}
+
+  it('is closed when nothing covers the page, or only a small browser bar does', () => {
+    expect(keyboardLayout({...base, viewportHeight: 800}).open).toBe(false)
+    expect(keyboardLayout({...base, viewportHeight: 740}).open).toBe(false)
+  })
+
+  it('with a keyboard up, sits on top of it and fills the room above it', () => {
+    const layout = keyboardLayout({...base, containerHeight: 800, viewportHeight: 500})
+    expect(layout.open).toBe(true)
+    expect(layout.bottom).toBe(300) // the keyboard's height
+    expect(layout.height).toBe(496) // all the visible room
+    // with a header above the map, the sheet fills the room below it instead
+    expect(keyboardLayout({...base, viewportHeight: 500}).height).toBe(404)
+  })
+
+  it('never grows taller than the box it sits in', () => {
+    const layout = keyboardLayout({...base, containerHeight: 400, viewportHeight: 500})
+    expect(layout.height).toBe(100) // 400 - 300
+    expect(layout.bottom + layout.height).toBeLessThanOrEqual(400)
+  })
+
+  it('takes a scrolled page into account (the visible part moved down)', () => {
+    const layout = keyboardLayout({...base, viewportHeight: 500, viewportOffsetTop: 100})
+    expect(layout.bottom).toBe(200)
+  })
+
+  it('keeps at least the search bar showing even in a tiny window', () => {
+    expect(keyboardLayout({...base, viewportHeight: 150}).height).toBeGreaterThanOrEqual(PEEK_CONTENT_PX)
   })
 })
