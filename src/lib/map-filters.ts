@@ -174,13 +174,14 @@ export function toggleAircraft(state: MapFilterState, model: string): MapFilterS
   return normalizeMapFilters({...state, aircraft})
 }
 
+/** True when a pill is on. Search text is not a filter: it never hides anything on the map. */
 export function filtersActive(state: MapFilterState) {
   return activeFilterCount(state) > 0
 }
 
+/** How many pills are on (the search text doesn't count). */
 export function activeFilterCount(state: MapFilterState) {
   return (
-    (state.query.trim() ? 1 : 0) +
     (state.photos ? 1 : 0) +
     (state.routes ? 1 : 0) +
     state.photoKinds.length +
@@ -222,9 +223,13 @@ function flightOk(state: MapFilterState, world: World | null, flight: FlightDoc)
   return world === null || world === 'aerial'
 }
 
+/**
+ * What the pills and the search text both allow: the list of search results. (Search lists what the pills currently
+ * show, so picking a result always opens something that is on the map.)
+ */
 export function applyMapFilters(data: MapData, input: MapFilterState): MapData {
   const state = normalizeMapFilters(input)
-  if (!filtersActive(state)) return data
+  if (!filtersActive(state) && !state.query.trim()) return data
   const world = worldOf(state)
   return {
     ...data,
@@ -243,6 +248,21 @@ export function applyMapFilters(data: MapData, input: MapFilterState): MapData {
         matchesQuery(state.query, flight.title, flight.place, flight.aircraft, 'flight', 'drone'),
     ),
   }
+}
+
+/**
+ * What is drawn on the map: only the pills decide. The search text is ignored, so typing in search (or picking a
+ * result) never hides or shows anything on the map; it just finds things.
+ */
+export function visibleOnMap(data: MapData, state: MapFilterState): MapData {
+  return applyMapFilters(data, {...state, query: ''})
+}
+
+/** True when two states have the same pills on (whatever the search text is). */
+export function samePills(a: MapFilterState, b: MapFilterState): boolean {
+  const pills = (state: MapFilterState) =>
+    JSON.stringify([state.photos, state.routes, state.photoKinds, state.routeKinds, state.aircraft])
+  return pills(a) === pills(b)
 }
 
 export type ResultItem = {

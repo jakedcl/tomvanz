@@ -17,6 +17,7 @@ import {FLIGHT_PATH_COLOR} from '@/lib/flight-color'
 import {trackColor} from '@/lib/track-color'
 import type {ReplayController, ReplayFrame} from '@/lib/flyover/replay-controller'
 import {createFlyover, type FlyoverHandle} from './flyover/flyover-map'
+import {nearestTrack, type TrackCandidate} from '@/lib/nearest-track'
 import {PhotoMapPopupCard} from './InfoCard'
 import {lineCoordinates, type MapData, SelectedItem} from '@/lib/sanity/types'
 import type {StyleSpecification} from 'maplibre-gl'
@@ -211,6 +212,54 @@ function hitLayerIds(map: MapLibreMap): string[] {
     .filter((id) => id.startsWith('track-hit-') || id.startsWith('flight-hit-'))
 }
 
+/** How far (pixels) from a click a line still counts as the one clicked: a finger is blunter than a mouse. */
+function clickReach(): number {
+  return window.matchMedia('(pointer: coarse)').matches ? 24 : 12
+}
+
+/**
+ * Every route and flight line drawn near a point, as screen-pixel lines (topmost first), plus the floating flight
+ * tube if one is near. The click then picks the nearest of them, wherever they overlap.
+ */
+function trackCandidatesNear(
+  map: MapLibreMap,
+  data: MapData,
+  point: {x: number; y: number},
+  reach: number,
+  tubePick: FlyoverHandle | null,
+): TrackCandidate[] {
+  const candidates: TrackCandidate[] = []
+  const seen = new Set<string>()
+  const tube = tubePick?.pickFlight(point.x, point.y, reach)
+  // A floating tube is drawn above the ground lines.
+  if (tube) {
+    seen.add(`flight:${tube.id}`)
+    candidates.push({kind: 'flight', id: tube.id, distance: tube.distance, order: -1})
+  }
+  const layers = hitLayerIds(map)
+  if (layers.length === 0) return candidates
+  const features = map.queryRenderedFeatures(
+    [
+      [point.x - reach, point.y - reach],
+      [point.x + reach, point.y + reach],
+    ],
+    {layers},
+  )
+  features.forEach((feature, index) => {
+    const id = feature.properties?.id
+    if (typeof id !== 'string' || !id) return
+    const kind = feature.layer?.id.startsWith('flight-hit-') ? 'flight' : 'track'
+    if (seen.has(`${kind}:${id}`)) return
+    seen.add(`${kind}:${id}`)
+    const source =
+      kind === 'flight' ? data.flights.find((item) => item._id === id)?.path : data.tracks.find((item) => item._id === id)?.route
+    const line = lineCoordinates(source).map(([lng, lat]) => map.project([lng, lat]))
+    if (line.length === 0) return
+    candidates.push({kind, id, line, order: index})
+  })
+  return candidates
+}
+
 function routeScrubMarkerEl(color: string): HTMLDivElement {
   const el = document.createElement('div')
   el.style.width = '14px'
@@ -292,6 +341,7 @@ export function MapCanvas({
     onSelect: onSelectRef.current,
     onPile: onPileRef.current,
     getActiveId: () => activeIdRef.current,
+    getSelectedId: () => (selectedRef.current?.kind === 'pin' ? selectedRef.current.id : null),
   })
 
   const fallbackMarker = useCallback(
@@ -350,35 +400,19 @@ export function MapCanvas({
       onMapErrorRef.current()
     })
     map.on('click', (event) => {
-      // A floating flight tube is picked by where it appears on screen (it isn't on the ground under it).
-      const tubeId = flyoverRef.current?.pickFlight(event.point.x, event.point.y)
-      if (tubeId) {
-        onSelectRef.current({kind: 'flight', id: tubeId, lng: event.lngLat.lng, lat: event.lngLat.lat, fly: true})
+      // Where lines overlap, the click means the one whose line passes nearest it (a floating flight tube counts too).
+      const reach = clickReach()
+      const hit = nearestTrack(
+        event.point,
+        trackCandidatesNear(map, dataRef.current, event.point, reach, flyoverRef.current),
+        reach,
+      )
+      if (hit) {
+        const primary: BunchMember = {kind: hit.kind, id: hit.id}
+        const bunch = bunchNearPoint(map, dataRef.current, event.lngLat.lng, event.lngLat.lat, primary)
+        if (openBunch(map, dataRef.current, bunch, onPileRef.current, panelHeightRef.current)) return
+        onSelectRef.current({kind: hit.kind, id: hit.id, lng: event.lngLat.lng, lat: event.lngLat.lat, fly: true})
         return
-      }
-      const layers = hitLayerIds(map)
-      if (layers.length) {
-        const hit = map.queryRenderedFeatures(event.point, {layers})[0]
-        const id = hit?.properties?.id
-        const layerId = hit?.layer?.id ?? ''
-        if (typeof id === 'string' && id) {
-          const kind = layerId.startsWith('flight-hit-') ? 'flight' : 'track'
-          const primary: BunchMember = {kind, id}
-          const bunch = bunchNearPoint(map, dataRef.current, event.lngLat.lng, event.lngLat.lat, primary)
-          if (
-            openBunch(map, dataRef.current, bunch, onPileRef.current, panelHeightRef.current)
-          ) {
-            return
-          }
-          onSelectRef.current({
-            kind,
-            id,
-            lng: event.lngLat.lng,
-            lat: event.lngLat.lat,
-            fly: true,
-          })
-          return
-        }
       }
       onSelectRef.current(null)
     })
@@ -461,9 +495,12 @@ export function MapCanvas({
 
   useEffect(() => {
     activeIdRef.current = selected?.kind === 'pin' ? selected.id : highlightId
+    // The photo whose popup is open steps aside (the popup points at its spot instead); every other photo stays.
+    const openPhotoId = selected?.kind === 'pin' ? selected.id : null
     markersRef.current.forEach((marker) => {
       const el = marker.getElement()
       el.dataset.active = el.dataset.id === activeIdRef.current ? 'true' : 'false'
+      el.dataset.selected = el.dataset.id === openPhotoId ? 'true' : 'false'
     })
   }, [selected, highlightId, data])
 
@@ -521,7 +558,8 @@ export function MapCanvas({
     const popup = new Popup({
       closeButton: false,
       closeOnClick: false,
-      offset: 2,
+      // The pointer's tip is right on the photo's spot.
+      offset: 0,
       maxWidth: 'none',
       className: 'tv-popup',
       anchor: 'bottom',
@@ -772,6 +810,8 @@ type PinRenderCtx = {
   onSelect: (item: SelectedItem | null) => void
   onPile: (members: BunchMember[]) => void
   getActiveId: () => string | null
+  /** The photo whose popup is open (its thumbnail steps aside). */
+  getSelectedId: () => string | null
 }
 
 /**
@@ -809,6 +849,7 @@ function renderPins(
     el.dataset.kind = 'pin'
     el.dataset.id = pin._id
     el.dataset.active = ctx.getActiveId() === pin._id ? 'true' : 'false'
+    el.dataset.selected = ctx.getSelectedId() === pin._id ? 'true' : 'false'
     el.setAttribute('aria-label', pin.title?.trim() || 'Photo')
     // Later pins sit on top, exactly as when every marker was added in order.
     el.style.zIndex = String(index)

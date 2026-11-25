@@ -15,6 +15,8 @@ import {
   filterOptions,
   normalizeMapFilters,
   resultList,
+  samePills,
+  visibleOnMap,
   type MapFilterState,
   type ResultItem,
 } from '@/lib/map-filters'
@@ -41,14 +43,19 @@ type Props = {
 export function MapApp({data: allData, initialSelected = null, loadFailed = false}: Props) {
   const [selected, setSelected] = useState<SelectedItem | null>(initialSelected)
   const [searchKey, setSearchKey] = useState(0)
-  const [mapFilters, setMapFiltersState] = useState<MapFilterState>(emptyMapFilters)
-  const setMapFilters = useCallback(
-    (next: MapFilterState) => setMapFiltersState(normalizeMapFilters(next)),
-    [],
-  )
-  // The map follows typing a beat later, so it doesn't re-fit on every keystroke.
-  const deferredFilters = useDeferredValue(mapFilters)
-  const data = useMemo(() => applyMapFilters(allData, deferredFilters), [allData, deferredFilters])
+  // The pills and the search text are kept apart: only the pills decide what the map shows, and a pills object that
+  // hasn't changed keeps the same identity however much is typed, so typing never redraws the map.
+  const [pills, setPills] = useState<MapFilterState>(emptyMapFilters)
+  const [query, setQuery] = useState('')
+  const mapFilters = useMemo(() => ({...pills, query}), [pills, query])
+  const setMapFilters = useCallback((next: MapFilterState) => {
+    const normalized = normalizeMapFilters(next)
+    setQuery(normalized.query)
+    setPills((current) => (samePills(current, normalized) ? current : {...normalized, query: ''}))
+  }, [])
+  // The map follows the pills a beat later, so it doesn't re-fit while they are being changed.
+  const deferredPills = useDeferredValue(pills)
+  const data = useMemo(() => visibleOnMap(allData, deferredPills), [allData, deferredPills])
   const options = useMemo(() => filterOptions(allData), [allData])
   const results = useMemo(
     () => resultList(applyMapFilters(allData, mapFilters), (track) => trackMiles(track)),
@@ -127,7 +134,7 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
           ? {kind: 'flight', id: item.id, fly: true}
           : {kind: 'track', id: item.id, fly: true},
     )
-    // Close the results list so it isn't covering the card; the filters stay applied.
+    // Close the results list so it isn't covering the card. Search never filtered the map, so nothing to undo.
     setSearchKey((key) => key + 1)
   }, [])
 
