@@ -171,8 +171,16 @@ export function timeAtDistance(track: ReplayTrack, meters: number): number {
   return a.t + ((target - a.dist) / (b.dist - a.dist)) * (b.t - a.t)
 }
 
-export type ReplaySpeed = 1 | 4 | 16
+export type ReplaySpeed = 1 | 4 | 16 | 32 | 64
+/** The speeds a flight can be replayed at. */
 export const REPLAY_SPEEDS: ReplaySpeed[] = [1, 4, 16]
+/** Routes have no real clock to be faithful to, and can be long, so they also go 32x and 64x. */
+const ROUTE_REPLAY_SPEEDS: ReplaySpeed[] = [1, 4, 16, 32, 64]
+
+/** The speed choices to offer for a flight or a route. */
+export function replaySpeedsFor(kind: 'flight' | 'route' | null): ReplaySpeed[] {
+  return kind === 'route' ? ROUTE_REPLAY_SPEEDS : REPLAY_SPEEDS
+}
 
 /** How long a replay should take to watch at its starting speed. */
 const TARGET_WATCH_SECONDS = 90

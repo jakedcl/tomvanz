@@ -83,7 +83,7 @@ export function MapSearch({state, onChange, filterGroups, results, total, onPick
             <PillRow state={state} options={filterGroups} onChange={onChange} />
             <div className="flex items-center justify-between gap-2 pt-0.5">
               <span />
-              {count > 0 ? (
+              {count > 0 || state.query.trim() ? (
                 <button
                   type="button"
                   onClick={() => onChange(emptyMapFilters)}

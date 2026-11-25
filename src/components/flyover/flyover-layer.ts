@@ -249,8 +249,8 @@ export class FlyoverLayer implements CustomLayerInterface {
     return changed
   }
 
-  /** The flight whose tube is nearest a screen point (within `maxPx`), if any. */
-  pick(x: number, y: number, maxPx = 14): string | null {
+  /** The flight whose tube is nearest a screen point (within `maxPx`), and how many pixels away it is. */
+  pick(x: number, y: number, maxPx = 14): {id: string; distance: number} | null {
     const map = this.map
     if (!map || this.built.size === 0) return null
     const width = map.getContainer().clientWidth
@@ -263,7 +263,7 @@ export class FlyoverLayer implements CustomLayerInterface {
       const cy = (e[1]! * mx + e[5]! * my + e[9]! * mz + e[13]!) / w
       return [(cx * 0.5 + 0.5) * width, (1 - (cy * 0.5 + 0.5)) * height]
     }
-    let best: string | null = null
+    let best: {id: string; distance: number} | null = null
     let bestDistance = maxPx
     for (const [id, built] of this.built) {
       let prev: [number, number] | null = null
@@ -273,7 +273,7 @@ export class FlyoverLayer implements CustomLayerInterface {
           const d = distanceToSegment(x, y, prev, p)
           if (d < bestDistance) {
             bestDistance = d
-            best = id
+            best = {id, distance: d}
           }
         }
         prev = p

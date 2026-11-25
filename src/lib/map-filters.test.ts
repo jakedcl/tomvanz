@@ -9,9 +9,11 @@ import {
   normalizeMapFilters,
   pillBlockedBy,
   resultList,
+  samePills,
   toggleAircraft,
   toggleGroup,
   toggleKind,
+  visibleOnMap,
   worldOf,
   type MapFilterState,
   type PhotoKind,
@@ -99,6 +101,52 @@ describe('search and no filter', () => {
   it('also searches the word drone for drone photos', () => {
     const drone = applyMapFilters(data, {...emptyMapFilters, query: 'drone'})
     expect(drone.pins.map((p) => p._id)).toEqual(['b'])
+  })
+})
+
+describe('search does not filter the map', () => {
+  const ids = (d: MapData) => ({
+    pins: d.pins.map((p) => p._id).sort(),
+    tracks: d.tracks.map((t) => t._id).sort(),
+    flights: d.flights.map((f) => f._id).sort(),
+  })
+
+  it('shows exactly the same on the map whatever is typed, with no pills on', () => {
+    const everything = ids(visibleOnMap(rich, emptyMapFilters))
+    expect(everything.pins.length + everything.tracks.length + everything.flights.length).toBeGreaterThan(0)
+    for (const query of ['marcy', 'hike', 'DJI', 'drone', 'zzzz nothing matches this', '  ']) {
+      expect(ids(visibleOnMap(rich, {...emptyMapFilters, query}))).toEqual(everything)
+    }
+  })
+
+  it('shows exactly the same with pills on, whatever is typed', () => {
+    for (const pills of [pressAll(['photos']), pressAll(['routes', 'hike']), pressAll(['photos', 'routes', 'flights'])]) {
+      const without = ids(visibleOnMap(rich, pills))
+      for (const query of ['marcy', 'ride', 'zzzz']) {
+        expect(ids(visibleOnMap(rich, {...pills, query}))).toEqual(without)
+      }
+    }
+  })
+
+  it('still finds things: the results list is narrowed by the search text', () => {
+    const found = applyMapFilters(rich, {...emptyMapFilters, query: 'marcy'})
+    expect(found.pins.map((p) => p._id)).toEqual(['a'])
+    expect(found.tracks).toEqual([])
+    expect(resultList(found, () => null).map((r) => r.id)).toEqual(['a'])
+  })
+
+  it('searches among what the pills show, so every result is on the map', () => {
+    const hikesOnly = pressAll(['routes', 'hike'])
+    expect(applyMapFilters(rich, {...hikesOnly, query: 'marcy'}).pins).toEqual([])
+    const onMap = ids(visibleOnMap(rich, hikesOnly))
+    const results = applyMapFilters(rich, {...hikesOnly, query: 'one'})
+    for (const id of ids(results).tracks) expect(onMap.tracks).toContain(id)
+  })
+
+  it('knows when only the search text changed', () => {
+    expect(samePills(emptyMapFilters, {...emptyMapFilters, query: 'abc'})).toBe(true)
+    expect(samePills(pressAll(['photos']), pressAll(['photos', 'aerial']))).toBe(false)
+    expect(samePills(pressAll(['routes', 'hike']), pressAll(['routes', 'hike']))).toBe(true)
   })
 })
 
@@ -276,6 +324,7 @@ describe('filterOptions', () => {
 
   it('counts every chosen pill', () => {
     expect(activeFilterCount(emptyMapFilters)).toBe(0)
+    expect(activeFilterCount({...emptyMapFilters, query: 'marcy'})).toBe(0) // search text isn't a filter
     expect(activeFilterCount(pressAll(['photos', 'routes', 'hike']))).toBe(3)
   })
 })
