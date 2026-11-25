@@ -34,7 +34,7 @@ describe('planPhotoLinks', () => {
         {
           _id: 'd',
           fileName: 'DJI_photo.jpg',
-          exifDateTimeOriginal: '2026:05:14 18:05:00',
+          exifDateTimeOriginal: '2026:05:14 14:05:00',
           cameraModel: 'FC3682',
         },
       ],

@@ -1,8 +1,14 @@
 import exifr from 'exifr'
 
+import {aircraftFromCameraModel} from './dji-camera'
 import {isDroneFileName} from './drone'
+import {
+  easternLocalToUtcIso,
+  parseExifCivilParts,
+  takenAtFromExifDateTime,
+  takenAtWithExifOffsetParts,
+} from './photo-taken-at'
 import {plausibleTime} from './plausible-time'
-import {takenAtFromExifDateTime} from './photo-taken-at'
 
 /** EXIF fields saved on Photo documents and used for auto-linking. */
 export type PhotoMeta = {
@@ -20,7 +26,7 @@ const EXIF_OPTIONS = {
   reviveValues: true,
   ifd1: false,
   iptc: false,
-  xmp: false,
+  xmp: true,
   icc: false,
   jfif: false,
 } as const
@@ -33,33 +39,59 @@ function offsetMinutes(offset: string | undefined): number | undefined {
   return sign * (Number(match[2]) * 60 + Number(match[3]))
 }
 
-/** Apply EXIF `±HH:MM` offset to a civil-time instant encoded as UTC ms (no zone in tag). */
-export function takenAtWithExifOffset(
-  when: Date | string | undefined,
-  offset: string | undefined,
-): string | undefined {
-  if (!when) return undefined
-  const date = when instanceof Date ? when : new Date(when)
-  if (Number.isNaN(date.getTime())) return takenAtFromExifDateTime(String(when))
-  const minutes = offsetMinutes(offset)
-  if (minutes == null) return plausibleTime(date)
-  const civilUtcMs = date.getTime()
-  const actualUtcMs = civilUtcMs - minutes * 60_000
-  return plausibleTime(new Date(actualUtcMs))
+function isDjiExif(make: unknown, model: unknown, fileName?: string): boolean {
+  const m = String(make ?? '').toLowerCase()
+  const mod = String(model ?? '').toUpperCase()
+  return (
+    isDroneFileName(fileName) ||
+    m.includes('dji') ||
+    Boolean(aircraftFromCameraModel(mod)) ||
+    /^FC\d+/i.test(String(model ?? ''))
+  )
 }
 
-function exifTakenAt(data: Record<string, unknown>): string | undefined {
-  const offset = (data.OffsetTimeOriginal ?? data.OffsetTimeDigitized) as string | undefined
-  const original = data.DateTimeOriginal ?? data.CreateDate ?? data.ModifyDate
-  if (original instanceof Date) return takenAtWithExifOffset(original, offset)
-  if (typeof original === 'string') {
-    const fromString = takenAtFromExifDateTime(original)
-    if (fromString && offset) {
-      const asDate = new Date(fromString)
-      if (!Number.isNaN(asDate.getTime())) return takenAtWithExifOffset(asDate, offset)
-    }
-    return fromString
+function partsFromExifValue(original: unknown): [number, number, number, number, number, number] | undefined {
+  if (typeof original === 'string') return parseExifCivilParts(original)
+  if (original instanceof Date && !Number.isNaN(original.getTime())) {
+    return [
+      original.getFullYear(),
+      original.getMonth() + 1,
+      original.getDate(),
+      original.getHours(),
+      original.getMinutes(),
+      original.getSeconds(),
+    ]
   }
+  return undefined
+}
+
+function exifTakenAt(data: Record<string, unknown>, fileName?: string): string | undefined {
+  const offset = (data.OffsetTimeOriginal ?? data.OffsetTimeDigitized ?? data.OffsetTime) as
+    | string
+    | undefined
+  const original = data.DateTimeOriginal ?? data.CreateDate ?? data.ModifyDate
+
+  const parts = partsFromExifValue(original)
+  if (parts) {
+    if (offset) {
+      const withOffset = takenAtWithExifOffsetParts(parts, offset)
+      if (withOffset) return withOffset
+    }
+    const [y, mo, d, h, mi, s] = parts
+    return easternLocalToUtcIso(y, mo, d, h, mi, s)
+  }
+
+  if (typeof original === 'string') {
+    if (offset && offsetMinutes(offset) != null) {
+      const civil = parseExifCivilParts(original)
+      if (civil) return takenAtWithExifOffsetParts(civil, offset)
+    }
+    if (isDjiExif(data.Make, data.Model, fileName)) {
+      return takenAtFromExifDateTime(original)
+    }
+    return takenAtFromExifDateTime(original)
+  }
+
   return undefined
 }
 
@@ -71,10 +103,26 @@ function gpsAltitudeMeters(altitude: unknown, ref: unknown): number | undefined 
   return Number.isFinite(meters) ? Math.round(meters * 10) / 10 : undefined
 }
 
+function droneAltitudeFromData(data: Record<string, unknown>): number | undefined {
+  for (const key of [
+    'RelativeAltitude',
+    'relativeAltitude',
+    'drone-dji:RelativeAltitude',
+    'GimbalRelativeAltitude',
+  ]) {
+    const v = Number(data[key])
+    if (Number.isFinite(v)) return Math.round(v * 10) / 10
+  }
+  return gpsAltitudeMeters(data.GPSAltitude, data.GPSAltitudeRef)
+}
+
 /**
  * Reads GPS, capture time (with EXIF timezone when available), and camera fields from a photo file.
  */
-export async function readPhotoMeta(input: Blob | ArrayBuffer | Uint8Array): Promise<PhotoMeta> {
+export async function readPhotoMeta(
+  input: Blob | ArrayBuffer | Uint8Array,
+  fileName?: string,
+): Promise<PhotoMeta> {
   let data: Record<string, unknown> | undefined
   try {
     data = (await exifr.parse(input, EXIF_OPTIONS)) ?? undefined
@@ -91,7 +139,7 @@ export async function readPhotoMeta(input: Blob | ArrayBuffer | Uint8Array): Pro
     meta.lng = lng
   }
 
-  const takenAt = exifTakenAt(data)
+  const takenAt = exifTakenAt(data, fileName)
   if (takenAt) meta.takenAt = takenAt
 
   const make = typeof data.Make === 'string' ? data.Make.trim() : undefined
@@ -102,31 +150,25 @@ export async function readPhotoMeta(input: Blob | ArrayBuffer | Uint8Array): Pro
   return meta
 }
 
-/** Altitude for storage — only when the file looks like a drone capture. */
-export function droneAltitudeFromExif(
-  fileName: string | undefined,
-  data: {GPSAltitude?: unknown; GPSAltitudeRef?: unknown},
-): number | undefined {
-  if (!isDroneFileName(fileName)) return undefined
-  return gpsAltitudeMeters(data.GPSAltitude, data.GPSAltitudeRef)
-}
-
 /**
- * Same as {@link readPhotoMeta} but includes drone-only altitude when the file name is DJI-style.
+ * Same as {@link readPhotoMeta} but includes drone-only altitude when the file looks like a drone capture.
  */
 export async function readPhotoMetaWithAltitude(
   input: Blob | ArrayBuffer | Uint8Array,
   fileName?: string,
 ): Promise<PhotoMeta> {
-  const meta = await readPhotoMeta(input)
+  const meta = await readPhotoMeta(input, fileName)
   if (!fileName) return meta
+  let data: Record<string, unknown> | undefined
   try {
-    const raw = (await exifr.parse(input, {gps: true, pick: ['GPSAltitude', 'GPSAltitudeRef']})) ?? {}
-    const alt = droneAltitudeFromExif(fileName, raw)
-    if (alt != null) meta.altitudeMeters = alt
+    data = (await exifr.parse(input, EXIF_OPTIONS)) ?? undefined
   } catch {
-    // ignore
+    return meta
   }
+  if (!data) return meta
+  if (!isDjiExif(data.Make, data.Model, fileName) && !isDroneFileName(fileName)) return meta
+  const alt = droneAltitudeFromData(data)
+  if (alt != null) meta.altitudeMeters = alt
   return meta
 }
 

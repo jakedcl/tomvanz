@@ -7,13 +7,9 @@ import {
   ROUTE_PHOTO_NEAR_METERS,
   routePhotoLinkWindow,
 } from './route-photo-link'
-import {haversineMeters, type LngLat} from './simplify-route'
 
 /** Seconds before / after a drone flight when a capture may still belong to that flight. */
 export const DRONE_FLIGHT_TIME_PADDING_SEC = 120
-
-/** Ground photos with no time window match may link to the nearest path within this distance. */
-export const GROUND_PROXIMITY_METERS = 400
 
 export type PhotoLinkCandidate = {
   _id: string
@@ -35,14 +31,14 @@ export type FlightLinkTarget = {
   endedAt?: string
   durationSeconds: number
   aircraft?: string
-  trackCoords?: LngLat[]
+  trackCoords?: [number, number][]
 }
 
 export type RouteLinkTarget = {
   _id: string
   startedAt?: string
   endedAt?: string
-  coordinates: LngLat[]
+  coordinates: [number, number][]
 }
 
 export type PhotoLinkPlan = {
@@ -70,7 +66,7 @@ function isDronePhoto(candidate: PhotoLinkCandidate): boolean {
   return effectiveDrone(candidate.drone, candidate.fileName)
 }
 
-export function parseDisplayCoordinates(json: string | undefined): LngLat[] {
+export function parseDisplayCoordinates(json: string | undefined): [number, number][] {
   if (!json?.trim()) return []
   try {
     const parsed = JSON.parse(json) as unknown
@@ -78,10 +74,10 @@ export function parseDisplayCoordinates(json: string | undefined): LngLat[] {
     return parsed
       .map((p) =>
         Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1])
-          ? ([Number(p[0]), Number(p[1])] as LngLat)
+          ? ([Number(p[0]), Number(p[1])] as [number, number])
           : null,
       )
-      .filter((p): p is LngLat => p != null)
+      .filter((p): p is [number, number] => p != null)
   } catch {
     return []
   }
@@ -104,12 +100,25 @@ export function droneFlightLinkWindow(flight: FlightLinkTarget): {start: string;
   return {start: new Date(startMs).toISOString(), end: new Date(endMs).toISOString()}
 }
 
+function routeTrackWindow(route: RouteLinkTarget): {start: string; end: string} | undefined {
+  if (!route.startedAt || !route.endedAt) return undefined
+  return routePhotoLinkWindow(route.startedAt, route.endedAt)
+}
+
+function flightTrackWindow(flight: FlightLinkTarget): {start: string; end: string} | undefined {
+  return droneFlightLinkWindow(flight)
+}
+
 function inWindow(iso: string, start: string, end: string): boolean {
   const t = new Date(iso).getTime()
   return t >= new Date(start).getTime() && t <= new Date(end).getTime()
 }
 
-function minDistanceToTrack(lat: number | undefined, lng: number | undefined, coords: LngLat[] | undefined): number {
+function minDistanceToTrack(
+  lat: number | undefined,
+  lng: number | undefined,
+  coords: [number, number][] | undefined,
+): number {
   if (lat == null || lng == null || !coords?.length) return Number.POSITIVE_INFINITY
   return minDistanceToPolylineMeters(lat, lng, coords)
 }
@@ -128,7 +137,6 @@ function photoMatchesFlight(
   return true
 }
 
-/** Pick the best flight among ties using nearest GPS point on the track. */
 function pickFlightByGps(
   candidate: PhotoLinkCandidate,
   flights: FlightLinkTarget[],
@@ -153,10 +161,6 @@ function pickFlightByGps(
   return {flight: best.flight, ambiguous: false}
 }
 
-/**
- * Decide which photos to attach to one flight (batch, from flight upload).
- * Only drone photos with matching aircraft and a time in the padded flight window.
- */
 export function planPhotoLinks(candidates: PhotoLinkCandidate[], flight: FlightLinkTarget): PhotoLinkPlan {
   const linkIds: string[] = []
   const unlinkedLabels: string[] = []
@@ -182,7 +186,7 @@ export function planPhotoLinks(candidates: PhotoLinkCandidate[], flight: FlightL
   return {linkIds, unlinkedLabels}
 }
 
-/** Plan a single photo's flight and route links (bulk upload / backfill). */
+/** Plan a single photo's flight and route links (upload / backfill). */
 export function planSinglePhotoLinks(
   photo: PhotoLinkCandidate,
   flights: FlightLinkTarget[],
@@ -205,57 +209,26 @@ export function planSinglePhotoLinks(
     }
   }
 
-  if (!photo.hasRouteRef && !drone) {
-    if (when) {
-      for (const route of routes) {
-        if (!route.startedAt || !route.endedAt) continue
-        const {start, end} = routePhotoLinkWindow(route.startedAt, route.endedAt)
-        if (!inWindow(when, start, end)) continue
-        if (photo.lat == null || photo.lng == null) continue
-        const dist = minDistanceToPolylineMeters(photo.lat, photo.lng, route.coordinates)
-        if (dist <= ROUTE_PHOTO_NEAR_METERS) {
-          routeId = route._id
-          break
-        }
+  if (!photo.hasRouteRef && !drone && when && photo.lat != null && photo.lng != null) {
+    for (const route of routes) {
+      const window = routeTrackWindow(route)
+      if (!window || !inWindow(when, window.start, window.end)) continue
+      const dist = minDistanceToPolylineMeters(photo.lat, photo.lng, route.coordinates)
+      if (dist <= ROUTE_PHOTO_NEAR_METERS) {
+        routeId = route._id
+        break
       }
     }
-    if (!routeId && photo.lat != null && photo.lng != null) {
-      let best: {id: string; dist: number} | undefined
-      let tie = false
-      for (const route of routes) {
-        const dist = minDistanceToPolylineMeters(photo.lat, photo.lng, route.coordinates)
-        if (dist > GROUND_PROXIMITY_METERS) continue
-        if (!best || dist < best.dist) {
-          best = {id: route._id, dist}
-          tie = false
-        } else if (best && Math.abs(dist - best.dist) < 5) {
-          tie = true
-        }
-      }
-      if (tie) {
-        linkReview = linkReview ?? 'Multiple routes are equally near; pick a route manually.'
-      } else if (best) {
-        routeId = best.id
-      }
-    }
+  }
 
-    if (!routeId && !flightId && photo.lat != null && photo.lng != null && when) {
-      let bestFlight: {id: string; dist: number} | undefined
-      let tie = false
-      for (const flight of flights) {
-        const dist = minDistanceToTrack(photo.lat, photo.lng, flight.trackCoords)
-        if (dist > GROUND_PROXIMITY_METERS) continue
-        if (!bestFlight || dist < bestFlight.dist) {
-          bestFlight = {id: flight._id, dist}
-          tie = false
-        } else if (bestFlight && Math.abs(dist - bestFlight.dist) < 5) {
-          tie = true
-        }
-      }
-      if (tie) {
-        linkReview = linkReview ?? 'Multiple flights are equally near; pick manually.'
-      } else if (bestFlight) {
-        flightId = bestFlight.id
+  if (!photo.hasFlightRef && !drone && !routeId && when && photo.lat != null && photo.lng != null) {
+    for (const flight of flights) {
+      const window = flightTrackWindow(flight)
+      if (!window || !inWindow(when, window.start, window.end)) continue
+      const dist = minDistanceToTrack(photo.lat, photo.lng, flight.trackCoords)
+      if (dist <= ROUTE_PHOTO_NEAR_METERS) {
+        flightId = flight._id
+        break
       }
     }
   }
@@ -269,39 +242,19 @@ export function planRoutePhotoLinks(
   maxDistanceMeters = ROUTE_PHOTO_NEAR_METERS,
 ): {linkIds: string[]} {
   const linkIds: string[] = []
-  if (!route.startedAt || !route.endedAt) {
-    // Time-less route: proximity only for ground photos
-    for (const photo of candidates) {
-      if (photo.hasRouteRef || isDronePhoto(photo)) continue
-      if (photo.lat == null || photo.lng == null) continue
-      const dist = minDistanceToPolylineMeters(photo.lat, photo.lng, route.coordinates)
-      if (dist <= GROUND_PROXIMITY_METERS) linkIds.push(photo._id)
-    }
-    return {linkIds}
-  }
+  const window = routeTrackWindow(route)
+  if (!window) return {linkIds}
 
-  const {start, end} = routePhotoLinkWindow(route.startedAt, route.endedAt)
-  const linked = new Set<string>()
+  const {start, end} = window
 
   for (const photo of candidates) {
     if (photo.hasRouteRef || isDronePhoto(photo)) continue
     const when = effectiveTakenAt(photo.takenAt, photo.fileName, photo.exifDateTimeOriginal)
-    if (when && photo.lat != null && photo.lng != null && inWindow(when, start, end)) {
-      const dist = minDistanceToPolylineMeters(photo.lat, photo.lng, route.coordinates)
-      if (dist <= maxDistanceMeters) {
-        linked.add(photo._id)
-      }
-    }
-  }
-
-  for (const photo of candidates) {
-    if (photo.hasRouteRef || isDronePhoto(photo) || linked.has(photo._id)) continue
-    if (photo.lat == null || photo.lng == null) continue
+    if (!when || photo.lat == null || photo.lng == null) continue
+    if (!inWindow(when, start, end)) continue
     const dist = minDistanceToPolylineMeters(photo.lat, photo.lng, route.coordinates)
-    if (dist <= GROUND_PROXIMITY_METERS) linked.add(photo._id)
+    if (dist <= maxDistanceMeters) linkIds.push(photo._id)
   }
-
-  linkIds.push(...linked)
 
   return {linkIds}
 }
@@ -314,12 +267,18 @@ export function patchFieldsFromSinglePlan(plan: SinglePhotoLinkPlan): PhotoLinkT
   return fields
 }
 
-export function nearestTrackMeters(lat: number, lng: number, coords: LngLat[]): number {
-  if (coords.length === 0) return Number.POSITIVE_INFINITY
-  if (coords.length === 1) return haversineMeters([lng, lat], coords[0]!)
-  let min = Number.POSITIVE_INFINITY
-  for (const c of coords) {
-    min = Math.min(min, haversineMeters([lng, lat], c))
+export function formatProposedLink(
+  plan: SinglePhotoLinkPlan,
+  flights: FlightLinkTarget[],
+  routes: RouteLinkTarget[],
+): string {
+  if (plan.flightId) {
+    const f = flights.find((item) => item._id === plan.flightId)
+    return f?.startedAt ? `flight:${f._id}` : `flight:${plan.flightId}`
   }
-  return min
+  if (plan.routeId) {
+    return `route:${plan.routeId}`
+  }
+  if (plan.linkReview) return 'review'
+  return '—'
 }

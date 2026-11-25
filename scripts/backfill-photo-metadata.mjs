@@ -1,6 +1,6 @@
 #!/usr/bin/env node --experimental-strip-types
 /**
- * Backfill camera / takenAt / altitude on published photos from image asset EXIF metadata.
+ * Backfill photo metadata from original assets and propose flight/route links.
  *
  *   node --experimental-strip-types scripts/backfill-photo-metadata.mjs
  *   SANITY_TOMVANZ_WRITE_TOKEN=… node --experimental-strip-types scripts/backfill-photo-metadata.mjs --apply
@@ -9,8 +9,10 @@
  */
 
 import {createClient} from '@sanity/client'
-import {isDroneFileName} from '../src/lib/drone.ts'
-import {takenAtFromExifDateTime} from '../src/lib/photo-taken-at.ts'
+
+import {effectiveDrone} from '../src/lib/drone.ts'
+import {parseDisplayCoordinates, planSinglePhotoLinks} from '../src/lib/photo-auto-link.ts'
+import {readPhotoMetaWithAltitude} from '../src/lib/photo-exif.ts'
 
 const projectId = process.env.NEXT_PUBLIC_SANITY_PROJECT_ID ?? 'lee2r8sa'
 const dataset = process.env.NEXT_PUBLIC_SANITY_DATASET ?? 'production'
@@ -21,7 +23,7 @@ const writeToken =
   process.env.SANITY_API_WRITE_TOKEN ??
   process.env.SANITY_AUTH_TOKEN
 
-const QUERY = `*[_type == "photo" && defined(image.asset) && !(_id in path("drafts.**"))] | order(_updatedAt desc) {
+const PHOTOS_QUERY = `*[_type == "photo" && defined(image.asset) && !(_id in path("drafts.**"))] | order(_id asc) {
   _id,
   title,
   takenAt,
@@ -30,51 +32,123 @@ const QUERY = `*[_type == "photo" && defined(image.asset) && !(_id in path("draf
   altitudeMeters,
   drone,
   "fileName": image.asset->originalFilename,
-  "exif": image.asset->metadata.exif,
-  "loc": image.asset->metadata.location
+  "assetUrl": image.asset->url,
+  "lat": location.lat,
+  "lng": location.lng,
+  "flightId": flight._ref,
+  "routeId": route._ref,
+  "flightTitle": flight->title,
+  "routeTitle": route->title
 }`
 
-function exifString(exif, key) {
-  const value = exif?.[key]
-  return typeof value === 'string' ? value.trim() : undefined
-}
+const FLIGHTS_QUERY = `*[_type == "flight" && defined(startedAt) && defined(durationSeconds) && !(_id in path("drafts.**"))]{
+  _id,
+  title,
+  startedAt,
+  endedAt,
+  durationSeconds,
+  aircraft,
+  displayCoordinates
+}`
 
-function altFromExif(exif, fileName) {
-  if (!isDroneFileName(fileName)) return undefined
-  const raw = exif?.GPSAltitude
-  const ref = exif?.GPSAltitudeRef
-  const value = Number(raw)
-  if (!Number.isFinite(value)) return undefined
-  const belowSea = ref === 1 || ref === '1'
-  return Math.round((belowSea ? -value : value) * 10) / 10
-}
+const ROUTES_QUERY = `*[_type == "track" && defined(route.coordinates) && !(_id in path("drafts.**"))]{
+  _id,
+  title,
+  startedAt,
+  endedAt,
+  "coordinates": route.coordinates
+}`
 
-function planPatch(doc) {
-  const exif = doc.exif ?? {}
-  const fileName = doc.fileName
-  const patch = {}
-  const make = exifString(exif, 'Make')
-  const model = exifString(exif, 'Model')
-  const takenFromExif = takenAtFromExifDateTime(exifString(exif, 'DateTimeOriginal'))
-  const alt = altFromExif(exif, fileName)
-  const drone = doc.drone === true || isDroneFileName(fileName)
+const etFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+})
 
-  if (make && make !== doc.cameraMake) patch.cameraMake = make
-  if (model && model !== doc.cameraModel) patch.cameraModel = model
-  if (takenFromExif && takenFromExif !== doc.takenAt) patch.takenAt = takenFromExif
-  if (drone && alt != null && alt !== doc.altitudeMeters) patch.altitudeMeters = alt
-  if (drone && doc.drone !== true) patch.drone = true
-
-  return patch
-}
-
-function table(rows) {
-  const header = ['Photo', 'File', 'Fields to set']
-  const lines = [header.join('\t')]
-  for (const row of rows) {
-    lines.push([row.title || row._id, row.fileName || '—', row.fields].join('\t'))
+function formatEt(iso) {
+  if (!iso) return '—'
+  try {
+    return `${etFormatter.format(new Date(iso))} ET`
+  } catch {
+    return '—'
   }
-  return lines.join('\n')
+}
+
+function currentLink(row) {
+  if (row.flightId) return `flight:${row.flightTitle || row.flightId}`
+  if (row.routeId) return `route:${row.routeTitle || row.routeId}`
+  return '—'
+}
+
+function proposedLabel(plan, flights, routes) {
+  if (plan.flightId) {
+    const f = flights.find((item) => item._id === plan.flightId)
+    return `flight:${f?.title || plan.flightId}`
+  }
+  if (plan.routeId) {
+    const r = routes.find((item) => item._id === plan.routeId)
+    return `route:${r?.title || plan.routeId}`
+  }
+  if (plan.linkReview) return 'review'
+  return '—'
+}
+
+function verdict(row, plan, metaChanged) {
+  if (row.flightId || row.routeId) {
+    const matches =
+      (plan.flightId && plan.flightId === row.flightId) ||
+      (plan.routeId && plan.routeId === row.routeId)
+    if (matches && !metaChanged) return 'agree'
+    return 'skip-manual'
+  }
+  if (plan.linkReview) return 'review'
+  if (plan.flightId || plan.routeId || metaChanged) return metaChanged && !plan.flightId && !plan.routeId ? 'metadata' : 'propose'
+  return 'agree'
+}
+
+function routeFromDoc(doc) {
+  let coordinates = []
+  try {
+    const raw = JSON.parse(doc.coordinates)
+    if (Array.isArray(raw)) {
+      coordinates = raw
+        .map((p) => (Array.isArray(p) && p.length >= 2 ? [Number(p[0]), Number(p[1])] : null))
+        .filter((p) => p && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+    }
+  } catch {
+    return null
+  }
+  if (coordinates.length < 2) return null
+  return {_id: doc._id, startedAt: doc.startedAt, endedAt: doc.endedAt, coordinates}
+}
+
+function flightFromDoc(doc) {
+  return {
+    _id: doc._id,
+    startedAt: doc.startedAt,
+    endedAt: doc.endedAt,
+    durationSeconds: doc.durationSeconds,
+    aircraft: doc.aircraft,
+    trackCoords: parseDisplayCoordinates(doc.displayCoordinates),
+  }
+}
+
+function metaPatch(row, meta) {
+  const patch = {}
+  const drone = effectiveDrone(meta.drone ?? row.drone, row.fileName)
+  if (meta.cameraMake && meta.cameraMake !== row.cameraMake) patch.cameraMake = meta.cameraMake
+  if (meta.cameraModel && meta.cameraModel !== row.cameraModel) patch.cameraModel = meta.cameraModel
+  if (meta.takenAt && meta.takenAt !== row.takenAt) patch.takenAt = meta.takenAt
+  if (meta.altitudeMeters != null && meta.altitudeMeters !== row.altitudeMeters) {
+    patch.altitudeMeters = meta.altitudeMeters
+  }
+  if (drone && row.drone !== true) patch.drone = true
+  return patch
 }
 
 async function main() {
@@ -87,39 +161,87 @@ async function main() {
     projectId,
     dataset,
     apiVersion,
-    useCdn: !writeToken,
+    useCdn: false,
     token: writeToken,
   })
 
-  const docs = await client.fetch(QUERY)
-  const planned = docs
-    .map((doc) => {
-      const patch = planPatch(doc)
-      const keys = Object.keys(patch)
-      if (keys.length === 0) return null
-      return {
-        _id: doc._id,
-        title: doc.title,
-        fileName: doc.fileName,
-        patch,
-        fields: keys.join(', '),
-      }
-    })
-    .filter(Boolean)
+  const [photos, flightsRaw, routesRaw] = await Promise.all([
+    client.fetch(PHOTOS_QUERY),
+    client.fetch(FLIGHTS_QUERY),
+    client.fetch(ROUTES_QUERY),
+  ])
 
-  console.log(`${apply ? 'Applying' : 'Dry run'}: ${planned.length} of ${docs.length} photo(s) on ${dataset}.`)
-  console.log(table(planned.slice(0, 200)))
-  if (planned.length > 200) console.log(`… and ${planned.length - 200} more`)
+  const flights = flightsRaw.map(flightFromDoc)
+  const routes = routesRaw.map(routeFromDoc).filter(Boolean)
+
+  console.log(`${apply ? 'Applying' : 'Dry run'}: ${photos.length} photo(s) on ${dataset}.`)
+  console.log('id\ttitle\tmodel\ttime ET\tcurrent\tproposed\tverdict')
+
+  let applyCount = 0
+
+  for (const row of photos) {
+    let meta = {}
+    if (row.assetUrl) {
+      try {
+        const res = await fetch(row.assetUrl)
+        if (res.ok) {
+          const buf = new Uint8Array(await res.arrayBuffer())
+          meta = await readPhotoMetaWithAltitude(buf, row.fileName)
+        }
+      } catch {
+        // skip download/parse errors
+      }
+    }
+
+    const lat = row.lat ?? meta.lat
+    const lng = row.lng ?? meta.lng
+    const takenAt = row.takenAt || meta.takenAt
+    const model = meta.cameraModel || row.cameraModel || '—'
+
+    const candidate = {
+      _id: row._id,
+      takenAt,
+      fileName: row.fileName,
+      lat,
+      lng,
+      cameraMake: meta.cameraMake || row.cameraMake,
+      cameraModel: meta.cameraModel || row.cameraModel,
+      drone: effectiveDrone(row.drone, row.fileName),
+      hasFlightRef: Boolean(row.flightId),
+      hasRouteRef: Boolean(row.routeId),
+    }
+
+    const plan =
+      row.flightId || row.routeId
+        ? {}
+        : planSinglePhotoLinks(candidate, flights, routes)
+
+    const patch = metaPatch(row, meta)
+    const metaChanged = Object.keys(patch).length > 0
+
+    if (!row.flightId && plan.flightId) patch.flight = {_type: 'reference', _ref: plan.flightId}
+    if (!row.routeId && plan.routeId) patch.route = {_type: 'reference', _ref: plan.routeId}
+    if (plan.linkReview) patch.linkReview = plan.linkReview
+
+    const v = verdict(row, plan, metaChanged)
+    const proposed = proposedLabel(plan, flights, routes)
+    const title = (row.title || '').replace(/\t/g, ' ')
+    console.log(
+      `${row._id}\t${title || '—'}\t${model}\t${formatEt(takenAt)}\t${currentLink(row)}\t${proposed}\t${v}`,
+    )
+
+    if (!apply || v === 'skip-manual') continue
+    if (Object.keys(patch).length === 0) continue
+
+    await client.patch(row._id).set(patch).commit()
+    applyCount += 1
+  }
 
   if (!apply) {
-    console.log('Pass --apply to write patches.')
-    return
+    console.log('Run with --apply after reviewing the dry-run output.')
+  } else {
+    console.log(`Patched ${applyCount} photo(s).`)
   }
-
-  for (const row of planned) {
-    await client.patch(row._id).set(row.patch).commit()
-  }
-  console.log(`Patched ${planned.length} photo(s).`)
 }
 
 main().catch((error) => {
