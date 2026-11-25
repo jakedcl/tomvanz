@@ -7,6 +7,8 @@ import {
   filterSubRows,
   filtersActive,
   flatTypeOptions,
+  flightAircraftType,
+  flightType,
   resultList,
 } from './map-filters'
 import type {MapData} from './sanity/types'
@@ -26,6 +28,39 @@ const data: MapData = {
       activity: 'hike',
       startedAt: '2025-07-03T08:00:00Z',
       route: {type: 'LineString', coordinates: '[[0,0],[1,1]]'},
+    },
+  ],
+}
+
+const rich: MapData = {
+  name: 'rich',
+  pins: data.pins,
+  tracks: [
+    {
+      _id: 'hike1',
+      title: 'Hike one',
+      activity: 'hike',
+      route: {type: 'LineString', coordinates: '[[0,0],[1,1]]'},
+    },
+    {
+      _id: 'bike1',
+      title: 'Bike one',
+      activity: 'bike',
+      route: {type: 'LineString', coordinates: '[[2,2],[3,3]]'},
+    },
+  ],
+  flights: [
+    {
+      _id: 'f-mini',
+      title: 'Mini flight',
+      aircraft: 'DJI Mini 3',
+      path: {type: 'LineString', coordinates: '[[4,4],[5,5]]'},
+    },
+    {
+      _id: 'f-air2',
+      title: 'Air 2S flight',
+      aircraft: 'DJI Air 2S',
+      path: {type: 'LineString', coordinates: '[[6,6],[7,7]]'},
     },
   ],
 }
@@ -78,11 +113,22 @@ describe('Photos / Routes group chips', () => {
 })
 
 describe('drone filter', () => {
-  it('keeps only drone photos and drops routes', () => {
+  it('keeps only drone photos and still shows routes', () => {
     const drone = applyMapFilters(data, {...emptyMapFilters, drone: true})
     expect(drone.pins.map((p) => p._id)).toEqual(['b'])
-    expect(drone.tracks).toEqual([])
+    expect(drone.tracks).toHaveLength(1)
     expect(filtersActive({...emptyMapFilters, drone: true})).toBe(true)
+  })
+
+  it('aerial with routes and flights does not hide tracks or flights', () => {
+    const filtered = applyMapFilters(rich, {
+      ...emptyMapFilters,
+      drone: true,
+      types: ['pin:all', 'track:all', 'track:hike', flightType()],
+    })
+    expect(filtered.pins.map((p) => p._id)).toEqual(['b'])
+    expect(filtered.tracks.map((t) => t._id)).toEqual(['hike1'])
+    expect(filtered.flights).toHaveLength(2)
   })
 
   it('combines with the other filters', () => {
@@ -95,6 +141,43 @@ describe('drone filter', () => {
   it('only offers the filter when some photo is a drone photo', () => {
     expect(filterOptions(data).hasDrone).toBe(true)
     expect(filterOptions({...data, pins: data.pins.map((p) => ({...p, isDrone: false}))}).hasDrone).toBe(false)
+  })
+})
+
+describe('sub-filter narrowing', () => {
+  it('Routes parent plus Hikes sub shows only hikes, not bikes', () => {
+    const filtered = applyMapFilters(rich, {
+      ...emptyMapFilters,
+      types: ['track:all', 'track:hike'],
+    })
+    expect(filtered.tracks.map((t) => t._id)).toEqual(['hike1'])
+  })
+
+  it('Flights parent plus aircraft sub shows only that model', () => {
+    const air2 = flightAircraftType('DJI Air 2S')
+    const filtered = applyMapFilters(rich, {
+      ...emptyMapFilters,
+      types: [flightType(), air2],
+    })
+    expect(filtered.flights.map((f) => f._id)).toEqual(['f-air2'])
+  })
+
+  it('Routes then Flights alone shows flights only', () => {
+    const filtered = applyMapFilters(rich, {
+      ...emptyMapFilters,
+      types: ['track:all', flightType()],
+    })
+    expect(filtered.tracks).toEqual([])
+    expect(filtered.flights).toHaveLength(2)
+  })
+
+  it('Routes with Hikes and Flights shows both', () => {
+    const filtered = applyMapFilters(rich, {
+      ...emptyMapFilters,
+      types: ['track:all', 'track:hike', flightType()],
+    })
+    expect(filtered.tracks.map((t) => t._id)).toEqual(['hike1'])
+    expect(filtered.flights).toHaveLength(2)
   })
 })
 
@@ -115,6 +198,19 @@ describe('filterSubRows', () => {
     const opts = filterOptions(data)
     const rows = filterSubRows({...emptyMapFilters, types: ['pin:all', 'track:all'], drone: true}, opts)
     expect(rows.map((r) => r.parent)).toEqual(['photos', 'routes'])
+  })
+
+  it('orders sub-rows Photos, Routes, Flights', () => {
+    const opts = filterOptions(rich)
+    const rows = filterSubRows(
+      {
+        ...emptyMapFilters,
+        types: ['pin:all', 'track:all', flightType()],
+        drone: true,
+      },
+      opts,
+    )
+    expect(rows.map((r) => r.parent)).toEqual(['photos', 'routes', 'flights'])
   })
 })
 

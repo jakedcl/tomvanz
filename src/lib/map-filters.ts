@@ -92,7 +92,13 @@ function flightsParentActive(state: MapFilterState) {
   return state.types.includes(flightType()) || state.types.some((t) => t.startsWith('flight:aircraft:'))
 }
 
-/** Sub-filter rows to show under the main chip row, ordered by depth then parent order. */
+const SUB_ROW_PARENT_ORDER: Record<FilterSubRowParent, number> = {
+  photos: 0,
+  routes: 1,
+  flights: 2,
+}
+
+/** Sub-filter rows to show under the main chip row, ordered by depth then Photos → Routes → Flights. */
 export function filterSubRows(
   state: MapFilterState,
   options: ReturnType<typeof filterOptions>,
@@ -101,13 +107,46 @@ export function filterSubRows(
   if (options.hasDrone && photosParentActive(state)) {
     rows.push({parent: 'photos', depth: 1, label: 'Photos'})
   }
-  if (options.routeKinds.length > 0 && routesParentActive(state)) {
+  if ((options.routeKinds.length > 0 || options.routesExtras.length > 0) && routesParentActive(state)) {
     rows.push({parent: 'routes', depth: 1, label: 'Routes'})
   }
   if (options.aircraftChips.length > 0 && flightsParentActive(state)) {
     rows.push({parent: 'flights', depth: 1, label: 'Flights'})
   }
-  return rows.sort((a, b) => a.depth - b.depth || a.parent.localeCompare(b.parent))
+  return rows.sort(
+    (a, b) => a.depth - b.depth || SUB_ROW_PARENT_ORDER[a.parent] - SUB_ROW_PARENT_ORDER[b.parent],
+  )
+}
+
+function trackSubFilters(state: MapFilterState) {
+  return state.types.filter((t) => t.startsWith('track:') && t !== 'track:all')
+}
+
+function flightAircraftSubFilters(state: MapFilterState) {
+  return state.types.filter((t) => t.startsWith('flight:aircraft:'))
+}
+
+function photosInScope(state: MapFilterState) {
+  if (state.types.length === 0) return true
+  return state.types.includes('pin:all') || state.types.includes(pinType())
+}
+
+function tracksInScope(state: MapFilterState) {
+  if (state.types.length === 0) return true
+  const specific = trackSubFilters(state)
+  if (specific.length > 0) return true
+  if (state.types.includes('track:all')) {
+    // Routes > Flights with no hike/bike — flights only, not GPX routes
+    if (state.types.includes(flightType()) && specific.length === 0) return false
+    return true
+  }
+  return false
+}
+
+function flightsInScope(state: MapFilterState) {
+  if (state.types.length === 0) return true
+  const aircraft = flightAircraftSubFilters(state)
+  return state.types.includes(flightType()) || aircraft.length > 0
 }
 
 /** Flat list for tests and legacy callers. */
@@ -131,21 +170,28 @@ function matchesQuery(query: string, ...fields: (string | undefined)[]) {
 }
 
 function pinTypeOk(state: MapFilterState) {
+  if (!photosInScope(state)) return false
   if (state.types.length === 0) return true
   return state.types.includes(pinType()) || state.types.includes('pin:all')
 }
 
 function trackTypeOk(state: MapFilterState, track: TrackDoc) {
+  if (!tracksInScope(state)) return false
   if (state.types.length === 0) return true
+  const specific = trackSubFilters(state)
   const type = trackType(track)
-  return state.types.includes(type) || state.types.includes('track:all')
+  if (specific.length > 0) return specific.includes(type)
+  return state.types.includes('track:all')
 }
 
 function flightTypeOk(state: MapFilterState, flight: FlightDoc) {
+  if (!flightsInScope(state)) return false
   if (state.types.length === 0) return true
-  if (state.types.includes(flightType())) return true
-  if (flight.aircraft && state.types.includes(flightAircraftType(flight.aircraft))) return true
-  return false
+  const aircraft = flightAircraftSubFilters(state)
+  if (aircraft.length > 0) {
+    return Boolean(flight.aircraft && aircraft.includes(flightAircraftType(flight.aircraft)))
+  }
+  return state.types.includes(flightType())
 }
 
 export function applyMapFilters(data: MapData, state: MapFilterState): MapData {
@@ -160,13 +206,11 @@ export function applyMapFilters(data: MapData, state: MapFilterState): MapData {
     ),
     tracks: data.tracks.filter(
       (track) =>
-        !state.drone &&
         trackTypeOk(state, track) &&
         matchesQuery(state.query, track.title, TRACK_LABELS[track.activity]),
     ),
     flights: data.flights.filter(
       (flight) =>
-        !state.drone &&
         flightTypeOk(state, flight) &&
         matchesQuery(state.query, flight.title, flight.place, flight.aircraft, 'flight', 'drone'),
     ),
