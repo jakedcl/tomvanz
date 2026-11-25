@@ -5,7 +5,7 @@ type Props = {
   onChange: (next: boolean) => void
 }
 
-/** The 3D toggle, top right (the same height as the Search button on the left). */
+/** The 3D toggle at the top right of the map. */
 export function ThreeDButton({threeD, onChange}: Props) {
   return (
     <button

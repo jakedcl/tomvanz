@@ -5,7 +5,7 @@ import {createRoot, type Root} from 'react-dom/client'
 import {LngLatBounds, Map as MapLibreMap, Marker, NavigationControl, Popup} from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import '@/lib/maplibre-worker'
-import {pinViewPadding, shouldFlyToSelection, trackFitPadding} from '@/lib/map-focus'
+import {shouldFlyToSelection, trackFitPadding} from '@/lib/map-focus'
 import {urlFor} from '@/lib/sanity/image'
 import {
   bunchNearPoint,
@@ -61,6 +61,7 @@ type Props = {
   /** Refit when the pile strip is showing (re-tap cluster). */
   pileMembers?: BunchMember[] | null
   onMapError: () => void
+  onPanStart: () => void
   /** Height of the bottom detail panel so routes fit above it. */
   panelHeight?: number
   /** The replay of the open flight or route: the marker and the follow camera come from it. */
@@ -184,19 +185,11 @@ function focusSelection(
   }
   const point = selectionPoint(data, selected)
   if (!point) return
-  if (selected.kind === 'pin' && panelHeight <= 0) {
-    map.easeTo({
-      center: point,
-      offset: [0, pinDrop(map)],
-      zoom: Math.max(map.getZoom(), 11),
-      duration,
-    })
-    return
-  }
+  const popupOffset = Math.min(pinDrop(map), Math.max(0, (mapHeight - panelHeight) * 0.35))
   map.easeTo({
     center: point,
+    offset: [0, popupOffset - panelHeight / 2],
     zoom: Math.max(map.getZoom(), 11),
-    padding: pinViewPadding(panelHeight),
     duration,
   })
 }
@@ -293,6 +286,7 @@ export function MapCanvas({
   onSelect,
   onPile,
   onMapError,
+  onPanStart,
   panelHeight = 0,
   pileMembers = null,
   replay,
@@ -316,6 +310,7 @@ export function MapCanvas({
   const readyRef = useRef(false)
   const selectedRef = useRef(selected)
   const onMapErrorRef = useRef(onMapError)
+  const onPanStartRef = useRef(onPanStart)
   const dataRef = useRef(data)
   const threeDRef = useRef(threeD)
   const panelHeightRef = useRef(panelHeight)
@@ -330,11 +325,12 @@ export function MapCanvas({
     onPileRef.current = onPile
     onThreeDGestureRef.current = onThreeDGesture
     onMapErrorRef.current = onMapError
+    onPanStartRef.current = onPanStart
     dataRef.current = data
     threeDRef.current = threeD
     replayRef.current = replay
     onRequestThreeDRef.current = onRequestThreeD
-  }, [selected, onSelect, onPile, onThreeDGesture, onMapError, data, threeD, replay, onRequestThreeD])
+  }, [selected, onSelect, onPile, onThreeDGesture, onMapError, onPanStart, data, threeD, replay, onRequestThreeD])
 
   const pinCtx = (): PinRenderCtx => ({
     data: dataRef.current,
@@ -450,6 +446,7 @@ export function MapCanvas({
       attrib?.classList.remove('maplibregl-compact-show')
       attrib?.removeAttribute('open')
     })
+    map.on('dragstart', () => onPanStartRef.current())
     map.on('moveend', () => renderPins(map, pinCtx(), markersRef, false))
     // Tilting the map by hand (right-click or Ctrl drag, two-finger tilt) is asking for 3D.
     // Only gestures count: programmatic moves have no originalEvent.

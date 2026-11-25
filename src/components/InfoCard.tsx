@@ -1,6 +1,6 @@
 'use client'
 
-import {useEffect, useMemo, useRef, useState} from 'react'
+import {useEffect, useMemo, useState} from 'react'
 import {createPortal} from 'react-dom'
 import {CloseIcon} from './CloseIcon'
 import {ElevationChart} from './ElevationChart'
@@ -148,6 +148,7 @@ function Lightbox({
   return createPortal(
     <div
       role="dialog"
+      data-map-photo-lightbox
       aria-label={alt}
       onClick={onClose}
       className="tv-lightbox fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm"
@@ -173,139 +174,37 @@ function Lightbox({
   )
 }
 
-function PointerColor({light}: {light: boolean}) {
-  const ref = useRef<HTMLSpanElement | null>(null)
-  useEffect(() => {
-    ref.current?.closest<HTMLElement>('.tv-popup')?.style.setProperty('--tip', light ? '#ffffff' : '#0c0c0c')
-  }, [light])
-  return <span ref={ref} hidden />
-}
-
-/** Map-anchored popup for a selected photo pin (not the bottom strip). */
+/** A map-anchored photo preview. The panel owns the item's metadata and share action. */
 export function PhotoMapPopupCard({data, selected, onClose}: Props) {
   const [expanded, setExpanded] = useState(false)
-  const [copied, setCopied] = useState(false)
-
-  useEffect(() => {
-    if (expanded) return
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.stopPropagation()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose, expanded])
-
   const card = cardModel(data, selected)
   if (!card || selected.kind !== 'pin') return null
-
   const cover = card.image ? infoCardCoverImage(card.image) : null
-  const untitled = card.title.trim() === ''
-  const headline = untitled ? (card.stats[0] ?? '') : card.title
-  const chips = untitled ? card.stats.slice(1) : card.stats
-  const hasDetails = chips.length > 0 || Boolean(card.body)
-  const hasCaption = Boolean(headline) || Boolean(card.eyebrow)
-
-  const share = async () => {
-    const url = new URL('/map', window.location.origin)
-    url.searchParams.set('photo', selected.id)
-    try {
-      if (navigator.share) {
-        await navigator.share({title: card.title, url: url.toString()})
-        return
-      }
-    } catch (error) {
-      if ((error as Error).name === 'AbortError') return
-    }
-    try {
-      await navigator.clipboard.writeText(url.toString())
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      /* clipboard blocked */
-    }
-  }
-
-  const frame =
-    'tv-card w-[min(340px,calc(100vw-24px))] max-h-[var(--card-max,520px)] overflow-y-auto overflow-x-hidden rounded-[22px] bg-white shadow-[0_24px_64px_rgba(0,0,0,0.3)] ring-1 ring-black/5'
 
   return (
-    <article className={frame}>
-      <PointerColor light={hasDetails} />
-      <div className="relative aspect-[4/3] overflow-hidden bg-neutral-200">
-        {cover ? (
-          <button
-            type="button"
-            onClick={() => setExpanded(true)}
-            aria-label="View photo full size"
-            className="block h-full w-full cursor-zoom-in"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={cover.src}
-              srcSet={cover.srcSet}
-              sizes={cover.sizes}
-              alt={card.imageAlt}
-              className="h-full w-full object-cover"
-            />
-          </button>
-        ) : (
-          <div className="absolute inset-0" style={{background: `linear-gradient(160deg, ${card.accent} 0%, #1a1a1a 78%)`}}>
-            <PhotoShape className="absolute left-1/2 top-1/2 h-10 w-10 -translate-x-1/2 -translate-y-1/2 text-white/40" />
-          </div>
-        )}
-        {hasCaption ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/75 via-black/30 to-transparent" />
-        ) : null}
+    <article className="tv-card map-photo-preview relative overflow-hidden rounded-2xl bg-neutral-800 shadow-xl ring-1 ring-black/5">
+      {cover ? (
         <button
           type="button"
-          onClick={share}
-          aria-label="Share link"
-          className="absolute left-3 top-3 flex h-9 items-center gap-1.5 rounded-full bg-black/35 px-3 text-[12px] font-semibold text-white backdrop-blur-md active:scale-95"
+          onClick={() => setExpanded(true)}
+          aria-label="View photo full size"
+          className="block h-full w-full cursor-zoom-in"
         >
-          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M12 3v12M12 3l-4 4M12 3l4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" />
-          </svg>
-          {copied ? 'Copied' : 'Share'}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={cover.src} srcSet={cover.srcSet} sizes={cover.sizes} alt={card.imageAlt}
+            className="h-full w-full object-cover" />
         </button>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-black/35 text-white backdrop-blur-md active:scale-95"
-        >
-          <CloseIcon className="h-4 w-4" />
-        </button>
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 p-4 text-white">
-          <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/75">
-            {card.isPhoto ? <PhotoShape className="h-3.5 w-3.5 text-white" /> : null}
-            {card.eyebrow}
-          </p>
-          {headline ? (
-            <h2 className="mt-1 text-[22px] font-bold leading-[1.1] tracking-tight [text-shadow:0_1px_12px_rgba(0,0,0,0.35)]">
-              {headline}
-            </h2>
-          ) : null}
-        </div>
-      </div>
-      {hasDetails ? (
-        <div className="px-4 pb-4 pt-3.5">
-          {chips.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
-              {chips.map((stat) => (
-                <span key={stat} className="rounded-full bg-black/[0.06] px-3 py-1 text-[12px] font-medium text-black/70">
-                  {stat}
-                </span>
-              ))}
-            </div>
-          ) : null}
-          {card.body ? (
-            <p className={`${chips.length ? 'mt-3' : ''} text-[14px] leading-relaxed text-black/70`}>{card.body}</p>
-          ) : null}
-        </div>
-      ) : null}
+      ) : (
+        <PhotoShape className="absolute left-1/2 top-1/2 h-10 w-10 -translate-x-1/2 -translate-y-1/2 text-white/50" />
+      )}
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close photo preview"
+        className="absolute right-2 top-2 flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-md"
+      >
+        <CloseIcon className="h-4 w-4" />
+      </button>
       {expanded && card.image ? <Lightbox image={card.image} alt={card.imageAlt} onClose={() => setExpanded(false)} /> : null}
     </article>
   )
@@ -371,7 +270,7 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, 
   useEffect(() => {
     if (expanded) return
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !document.querySelector('[data-map-photo-lightbox]')) {
         event.stopPropagation()
         onClose()
       }
@@ -405,9 +304,6 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, 
     }
   }
 
-  const frame =
-    'tv-card tv-sheet w-full overflow-x-hidden rounded-t-[18px] bg-white shadow-[0_-6px_28px_rgba(0,0,0,0.18)] ring-1 ring-black/5 md:rounded-[18px] md:shadow-[0_16px_48px_rgba(0,0,0,0.22)]'
-
   const untitled = card.title.trim() === ''
   const headline = untitled ? (card.stats[0] ?? '') : card.title
   const baseChips = untitled ? card.stats.slice(1) : card.stats
@@ -425,7 +321,7 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, 
     : null
 
   return (
-    <article className={frame}>
+    <article className="w-full overflow-x-hidden">
       <div className="flex gap-3 p-3">
         <StripThumb accent={card.accent} dashed={card.dashed} hasCover={Boolean(thumbSrc)} onOpen={() => setExpanded(true)}>
           {thumbSrc ? (
@@ -441,7 +337,7 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, 
                 {card.eyebrow}
               </p>
               {headline ? (
-                <h2 className="mt-0.5 truncate text-[17px] font-bold leading-tight tracking-tight text-black">
+                <h2 className="mt-0.5 break-words text-[17px] font-bold leading-tight tracking-tight text-black">
                   {headline}
                 </h2>
               ) : null}
@@ -463,7 +359,7 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, 
                 </div>
               ) : null}
               {card.body ? (
-                <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-black/65">{card.body}</p>
+                <p className="mt-1 text-[12px] leading-snug text-black/65">{card.body}</p>
               ) : null}
             </div>
             <div className="flex shrink-0 gap-1">
@@ -476,14 +372,6 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, 
                 <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
                   <path d="M12 3v12M12 3l-4 4M12 3l4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" />
                 </svg>
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="Close"
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.06] text-black/70 active:scale-95"
-              >
-                <CloseIcon className="h-3.5 w-3.5" />
               </button>
             </div>
           </div>
