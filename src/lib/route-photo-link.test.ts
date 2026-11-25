@@ -33,6 +33,7 @@ describe('planRoutePhotoLinks', () => {
   const end = '2024-06-01T11:00:00.000Z'
 
   it('links photos in the time window and near the track', () => {
+    const route = {_id: 'route-1', startedAt: start, endedAt: end, coordinates: line}
     const {linkIds} = planRoutePhotoLinks(
       [
         {
@@ -48,19 +49,15 @@ describe('planRoutePhotoLinks', () => {
           lng: -73.9,
         },
       ],
-      start,
-      end,
-      line,
+      route,
     )
     expect(linkIds).toEqual(['a'])
   })
 
-  it('skips photos without timestamps', () => {
+  it('skips photos without timestamps when they are far from the route', () => {
     const {linkIds} = planRoutePhotoLinks(
-      [{_id: 'c', lat: 44.1, lng: -73.9}],
-      start,
-      end,
-      line,
+      [{_id: 'c', lat: 44.5, lng: -73.9}],
+      {_id: 'route-2', startedAt: start, endedAt: end, coordinates: line},
     )
     expect(linkIds).toEqual([])
   })

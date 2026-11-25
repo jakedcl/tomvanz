@@ -2,7 +2,7 @@ import {plausibleTime} from './plausible-time.ts'
 
 /** DJI Fly export: `dji_fly_YYYYMMDD_HHMMSS_…` (local America/New_York). */
 const DJI_FLY = /dji_fly_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/i
-/** Camera roll: `DJI_YYYYMMDDHHMMSS_…` */
+/** Camera roll: `DJI_YYYYMMDDHHMMSS_…` (local America/New_York). */
 const DJI_STAMP = /dji_(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/i
 
 const EXIF_DATE = /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/
@@ -35,17 +35,46 @@ export function easternLocalToUtcIso(
   return plausibleTime(new Date(utcMs))
 }
 
-function isoFromUtcParts(y: string, mo: string, d: string, h: string, mi: string, s: string): string | undefined {
-  const date = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)))
-  return plausibleTime(date)
+export function parseExifCivilParts(
+  value: string,
+): [number, number, number, number, number, number] | undefined {
+  const match = value.trim().match(EXIF_DATE)
+  if (!match) return undefined
+  return [
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6]),
+  ]
 }
 
-/** Sanity / EXIF `YYYY:MM:DD HH:mm:ss` (no timezone) → ISO. */
+/** EXIF `±HH:MM` offset applied to a civil timestamp (no Z). */
+export function takenAtWithExifOffsetParts(
+  parts: [number, number, number, number, number, number],
+  offset: string,
+): string | undefined {
+  const trimmed = offset.trim()
+  const match = trimmed.match(/^([+-])(\d{2}):(\d{2})$/)
+  if (!match) return undefined
+  const sign = match[1] === '-' ? -1 : 1
+  const offsetMinutes = sign * (Number(match[2]) * 60 + Number(match[3]))
+  const [y, mo, d, h, mi, s] = parts
+  const utcMs = Date.UTC(y, mo - 1, d, h, mi, s) - offsetMinutes * 60_000
+  return plausibleTime(new Date(utcMs))
+}
+
+/**
+ * Sanity / EXIF `YYYY:MM:DD HH:mm:ss` with no timezone → Eastern local (site content is NY-area).
+ * Never treats civil clock fields as UTC.
+ */
 export function takenAtFromExifDateTime(value: string | undefined | null): string | undefined {
   if (!value || typeof value !== 'string') return undefined
-  const match = value.trim().match(EXIF_DATE)
-  if (!match) return plausibleTime(new Date(value))
-  return isoFromUtcParts(match[1]!, match[2]!, match[3]!, match[4]!, match[5]!, match[6]!)
+  const parts = parseExifCivilParts(value)
+  if (!parts) return undefined
+  const [y, mo, d, h, mi, s] = parts
+  return easternLocalToUtcIso(y, mo, d, h, mi, s)
 }
 
 /** Guess capture time from a DJI-style file name when EXIF / `takenAt` is missing. */
@@ -63,7 +92,16 @@ export function inferTakenAtFromFileName(fileName: string | null | undefined): s
     )
   }
   const stamp = fileName.match(DJI_STAMP)
-  if (stamp) return isoFromUtcParts(stamp[1]!, stamp[2]!, stamp[3]!, stamp[4]!, stamp[5]!, stamp[6]!)
+  if (stamp) {
+    return easternLocalToUtcIso(
+      Number(stamp[1]),
+      Number(stamp[2]),
+      Number(stamp[3]),
+      Number(stamp[4]),
+      Number(stamp[5]),
+      Number(stamp[6]),
+    )
+  }
   return undefined
 }
 
@@ -82,4 +120,9 @@ export function effectiveTakenAt(
   const fromFile = inferTakenAtFromFileName(fileName)
   if (fromFile) return fromFile
   return takenAtFromExifDateTime(exifDateTimeOriginal)
+}
+
+/** DJI EXIF DateTimeOriginal without OffsetTime* → Eastern, not UTC. */
+export function djiExifDateTimeOriginalToIso(value: string): string | undefined {
+  return takenAtFromExifDateTime(value)
 }

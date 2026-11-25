@@ -1,23 +1,8 @@
-import {
-  PHOTO_LINK_PADDING_AFTER_SEC,
-  PHOTO_LINK_PADDING_BEFORE_SEC,
-  type PhotoLinkCandidate,
-} from './flight-photo-link'
-import {effectiveTakenAt} from './photo-taken-at'
+import {PHOTO_LINK_PADDING_AFTER_SEC, PHOTO_LINK_PADDING_BEFORE_SEC} from './flight-photo-link'
 import {haversineMeters, type LngLat} from './simplify-route'
 
 /** Max distance from the GPX line for a photo to count as taken on the route. */
 export const ROUTE_PHOTO_NEAR_METERS = 200
-
-export type RoutePhotoLinkCandidate = PhotoLinkCandidate & {
-  lat?: number
-  lng?: number
-}
-
-function inWindow(iso: string, startIso: string, endIso: string): boolean {
-  const t = new Date(iso).getTime()
-  return t >= new Date(startIso).getTime() && t <= new Date(endIso).getTime()
-}
 
 export function routePhotoLinkWindow(startedAtIso: string, endedAtIso: string): {start: string; end: string} {
   const startMs = new Date(startedAtIso).getTime()
@@ -56,23 +41,4 @@ export function minDistanceToPolylineMeters(lat: number, lng: number, coords: Ln
   return min
 }
 
-export function planRoutePhotoLinks(
-  candidates: RoutePhotoLinkCandidate[],
-  startedAt: string,
-  endedAt: string,
-  coordinates: LngLat[],
-  maxDistanceMeters = ROUTE_PHOTO_NEAR_METERS,
-): {linkIds: string[]} {
-  const {start, end} = routePhotoLinkWindow(startedAt, endedAt)
-  const linkIds: string[] = []
-
-  for (const photo of candidates) {
-    const when = effectiveTakenAt(photo.takenAt, photo.fileName, photo.exifDateTimeOriginal)
-    if (!when || !inWindow(when, start, end)) continue
-    if (photo.lat == null || photo.lng == null) continue
-    const dist = minDistanceToPolylineMeters(photo.lat, photo.lng, coordinates)
-    if (dist <= maxDistanceMeters) linkIds.push(photo._id)
-  }
-
-  return {linkIds}
-}
+export {planRoutePhotoLinks} from './photo-auto-link'

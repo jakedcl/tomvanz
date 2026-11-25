@@ -68,6 +68,7 @@ export function GpxInput(props: ObjectInputProps) {
           .set({
             ...patchTitleIfEmpty(currentTitle, suggestedTitle),
             ...(startedAt ? {startedAt} : {}),
+            ...(endedAt ? {endedAt} : {}),
             route: {
               type: 'LineString',
               coordinates: JSON.stringify(gpx.coordinates),

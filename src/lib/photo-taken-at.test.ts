@@ -1,6 +1,7 @@
 import {describe, expect, it} from 'vitest'
 
 import {
+  djiExifDateTimeOriginalToIso,
   easternLocalToUtcIso,
   effectiveTakenAt,
   inferTakenAtFromFileName,
@@ -34,14 +35,20 @@ describe('inferTakenAtFromFileName', () => {
     )
   })
 
-  it('reads DJI camera roll timestamps as UTC fields', () => {
-    expect(inferTakenAtFromFileName('DJI_20230514143000_0405_D.JPG')).toBe('2023-05-14T14:30:00.000Z')
+  it('reads DJI camera roll timestamps as America/New_York', () => {
+    expect(inferTakenAtFromFileName('DJI_20230514143000_0405_D.JPG')).toBe('2023-05-14T18:30:00.000Z')
   })
 })
 
 describe('takenAtFromExifDateTime', () => {
-  it('parses EXIF date strings', () => {
-    expect(takenAtFromExifDateTime('2026:05:14 18:05:00')).toBe('2026-05-14T18:05:00.000Z')
+  it('interprets civil EXIF strings as Eastern, not UTC', () => {
+    expect(takenAtFromExifDateTime('2026:05:14 18:05:00')).toBe('2026-05-14T22:05:00.000Z')
+  })
+})
+
+describe('djiExifDateTimeOriginalToIso', () => {
+  it('maps DJI DateTimeOriginal without offset through Eastern', () => {
+    expect(djiExifDateTimeOriginalToIso('2026:10:11 11:09:52')).toBe('2026-10-11T15:09:52.000Z')
   })
 })
 
@@ -54,7 +61,7 @@ describe('effectiveTakenAt', () => {
 
   it('falls back to EXIF when takenAt and file name lack a time', () => {
     expect(effectiveTakenAt(undefined, 'vacation.jpg', '2026:05:14 18:05:00')).toBe(
-      '2026-05-14T18:05:00.000Z',
+      '2026-05-14T22:05:00.000Z',
     )
   })
 })

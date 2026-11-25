@@ -24,15 +24,37 @@ const FLIGHTS_QUERY = `*[_type == "flight" && defined(startedAt) && defined(dura
   _id,
   title,
   startedAt,
-  durationSeconds
+  endedAt,
+  durationSeconds,
+  aircraft,
+  displayCoordinates
 } | order(startedAt desc)`
 
 const CANDIDATES_QUERY = `*[_type == "photo" && !defined(flight)]{
   _id,
   takenAt,
+  drone,
+  cameraMake,
+  cameraModel,
   "fileName": image.asset->originalFilename,
-  "exifDateTimeOriginal": image.asset->metadata.exif.DateTimeOriginal
+  "exifDateTimeOriginal": image.asset->metadata.exif.DateTimeOriginal,
+  "lat": location.lat,
+  "lng": location.lng,
+  "hasFlightRef": defined(flight),
+  "hasRouteRef": defined(route)
 }`
+
+function parseTrackCoords(json) {
+  try {
+    const raw = JSON.parse(json || '[]')
+    if (!Array.isArray(raw)) return undefined
+    return raw
+      .map((p) => (Array.isArray(p) && p.length >= 2 ? [Number(p[0]), Number(p[1])] : null))
+      .filter((p) => p && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+  } catch {
+    return undefined
+  }
+}
 
 async function main() {
   if (!writeToken && apply) {
@@ -61,11 +83,14 @@ async function main() {
   const unlinkedLabels = new Set()
 
   for (const flight of flights) {
-    const {linkIds, unlinkedLabels: flightUnlinked} = planPhotoLinks(
-      candidates,
-      flight.startedAt,
-      flight.durationSeconds,
-    )
+    const {linkIds, unlinkedLabels: flightUnlinked} = planPhotoLinks(candidates, {
+      _id: flight._id,
+      startedAt: flight.startedAt,
+      endedAt: flight.endedAt,
+      durationSeconds: flight.durationSeconds,
+      aircraft: flight.aircraft,
+      trackCoords: parseTrackCoords(flight.displayCoordinates),
+    })
     if (!apply) {
       if (linkIds.length || flightUnlinked.length) {
         console.log(

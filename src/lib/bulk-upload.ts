@@ -1,44 +1,15 @@
-import exifr from 'exifr'
-
+import {isDroneFileName} from './drone'
 import {isFlightLogFileName, type ParsedFlightLog} from './flight-log'
-import {plausibleTime} from './plausible-time'
+import {type PhotoMeta, readPhotoMetaWithAltitude} from './photo-exif'
 import {prepareRouteDisplayFields, type LngLat} from './simplify-route'
 
 export {plausibleTime} from './plausible-time'
+export type {PhotoMeta} from './photo-exif'
+export {readPhotoMeta, SANITY_IMAGE_EXTRACT} from './photo-exif'
 
-/** What the bulk uploader pulls out of a photo file. */
-export type PhotoMeta = {
-  lat?: number
-  lng?: number
-  /** When it was taken, as an ISO date-time. */
-  takenAt?: string
-}
-
-/**
- * Reads the GPS position and the time taken from a photo's own data. Missing or unreadable
- * data is fine (screenshots, edited exports): the fields are simply left out.
- */
-export async function readPhotoMeta(input: Blob | ArrayBuffer | Uint8Array): Promise<PhotoMeta> {
-  let data: Record<string, unknown> | undefined
-  try {
-    data = (await exifr.parse(input, {gps: true})) ?? undefined
-  } catch {
-    return {}
-  }
-  if (!data) return {}
-
-  const meta: PhotoMeta = {}
-  const lat = Number(data.latitude)
-  const lng = Number(data.longitude)
-  if (Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0)) {
-    meta.lat = lat
-    meta.lng = lng
-  }
-
-  const when = (data.DateTimeOriginal ?? data.CreateDate) as Date | string | undefined
-  const takenAt = plausibleTime(when instanceof Date ? when : when ? new Date(when) : null)
-  if (takenAt) meta.takenAt = takenAt
-  return meta
+/** Reads EXIF for bulk upload (includes drone altitude when applicable). */
+export async function readPhotoMetaFromFile(file: File): Promise<PhotoMeta> {
+  return readPhotoMetaWithAltitude(file, file.name)
 }
 
 const PHOTO_EXTENSIONS = /\.(jpe?g|png|heic|heif|webp|tiff?)$/i
@@ -49,8 +20,9 @@ export function isPhotoFile(file: {name: string; type: string}): boolean {
 }
 
 /** The Photo document created for an uploaded picture. The title is optional and left out when blank. */
-export function photoFromUpload(assetId: string, meta: PhotoMeta, title?: string) {
+export function photoFromUpload(assetId: string, meta: PhotoMeta, title?: string, fileName?: string) {
   const cleanTitle = title?.trim()
+  const drone = fileName ? isDroneFileName(fileName) : undefined
   return {
     _type: 'photo' as const,
     ...(cleanTitle ? {title: cleanTitle} : {}),
@@ -59,6 +31,10 @@ export function photoFromUpload(assetId: string, meta: PhotoMeta, title?: string
       ? {location: {_type: 'geopoint' as const, lat: meta.lat, lng: meta.lng}}
       : {}),
     ...(meta.takenAt ? {takenAt: meta.takenAt} : {}),
+    ...(meta.cameraMake ? {cameraMake: meta.cameraMake} : {}),
+    ...(meta.cameraModel ? {cameraModel: meta.cameraModel} : {}),
+    ...(drone === true ? {drone: true} : {}),
+    ...(drone && meta.altitudeMeters != null ? {altitudeMeters: meta.altitudeMeters} : {}),
   }
 }
 
@@ -143,7 +119,7 @@ export function guessActivity(type: string | undefined): Activity | undefined {
 /** The Route document created for an uploaded GPX: the line, a simplified copy for the map, and its length. */
 export function routeFromUpload(
   fileAssetId: string,
-  route: {title: string; activity: Activity; coordinates: LngLat[]; startedAt?: string},
+  route: {title: string; activity: Activity; coordinates: LngLat[]; startedAt?: string; endedAt?: string},
 ) {
   const {displayCoordinates, distanceMeters} = prepareRouteDisplayFields(route.coordinates)
   return {
@@ -155,6 +131,7 @@ export function routeFromUpload(
     displayCoordinates,
     distanceMeters,
     ...(route.startedAt ? {startedAt: route.startedAt} : {}),
+    ...(route.endedAt ? {endedAt: route.endedAt} : {}),
   }
 }
 
@@ -175,7 +152,9 @@ export function flightFromUpload(
     durationSeconds: parsed.durationSeconds,
     maxHeightMeters: parsed.maxHeightMeters,
     aircraft: parsed.aircraft,
+    ...(parsed.aircraftSerial ? {aircraftSerial: parsed.aircraftSerial} : {}),
     ...(parsed.startedAt ? {startedAt: parsed.startedAt} : {}),
+    ...(parsed.endedAt ? {endedAt: parsed.endedAt} : {}),
     ...(parsed.place ? {place: parsed.place} : {}),
     ...(parsed.home
       ? {home: {_type: 'geopoint' as const, lat: parsed.home.lat, lng: parsed.home.lng}}

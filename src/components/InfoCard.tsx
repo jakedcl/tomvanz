@@ -5,11 +5,14 @@ import {createPortal} from 'react-dom'
 import {CloseIcon} from './CloseIcon'
 import {ElevationChart} from './ElevationChart'
 import {FlightAltitudeChart} from './FlightAltitudeChart'
+import {ReplayControls} from './ReplayControls'
 import {PhotoShape} from './shapes'
 import {FLIGHT_PATH_COLOR} from '@/lib/flight-color'
 import {formatFeet, type RouteScrubPoint} from '@/lib/elevation'
 import {formatMiles} from '@/lib/geo'
 import type {FlightSeriesSample} from '@/lib/flight-log'
+import type {ReplayController} from '@/lib/flyover/replay-controller'
+import {flightReplayTrack, routeReplayTrack} from '@/lib/flyover/replay-track'
 import {trackMiles} from '@/lib/track-mileage'
 import type {SanityImageSource} from '@sanity/image-url'
 import {infoCardCoverImage, infoCardLightboxImage, sanityImageAlt, urlFor} from '@/lib/sanity/image'
@@ -30,6 +33,10 @@ type Props = {
   onFlightScrub?: (sample: FlightSeriesSample | null) => void
   onRouteScrub?: (point: RouteScrubPoint | null) => void
   onOpenPhoto?: (id: string) => void
+  /** The replay of this flight or route (loaded here once its path is known). */
+  replay?: ReplayController
+  /** Starts the replay (the map also switches 3D on). */
+  onPlay?: () => void
 }
 
 type LinkedPhoto = {_id: string; title?: string; photo?: {asset?: {_ref: string}}}
@@ -304,15 +311,27 @@ export function PhotoMapPopupCard({data, selected, onClose}: Props) {
   )
 }
 
-export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, onOpenPhoto}: Props) {
+export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, onOpenPhoto, replay, onPlay}: Props) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const [linkedPhotos, setLinkedPhotos] = useState<LinkedPhoto[]>([])
-  const [flightSeries, setFlightSeries] = useState<FlightSeriesSample[] | null>(null)
+  // Which flight the series belongs to, so a slow load can never show one flight's log on another.
+  const [seriesState, setSeriesState] = useState<{id: string; series: FlightSeriesSample[]} | null>(null)
+  const flightSeries = seriesState?.id === selected.id ? seriesState.series : null
   const track = selected.kind === 'track' ? data.tracks.find((item) => item._id === selected.id) : undefined
   const flight = selected.kind === 'flight' ? data.flights.find((item) => item._id === selected.id) : undefined
   const routeCoords = useMemo(() => (track ? lineCoordinates(track.route) : null), [track])
   const card = cardModel(data, selected)
+
+  // Give the replay this flight's or route's path once it's known, and take it back when the card goes away.
+  const trackActivity = track?.activity
+  useEffect(() => {
+    if (!replay) return
+    if (selected.kind === 'track' && routeCoords) replay.load(routeReplayTrack(routeCoords, trackActivity))
+    else if (selected.kind === 'flight' && flightSeries) replay.load(flightReplayTrack(flightSeries))
+    else replay.load(null)
+    return () => replay.load(null)
+  }, [replay, selected.kind, routeCoords, trackActivity, flightSeries])
 
   useEffect(() => {
     if (selected.kind !== 'flight' && selected.kind !== 'track') return
@@ -329,19 +348,19 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, 
         if (selected.kind === 'flight') {
           if (payload.series) {
             try {
-              setFlightSeries(JSON.parse(payload.series) as FlightSeriesSample[])
+              setSeriesState({id: selected.id, series: JSON.parse(payload.series) as FlightSeriesSample[]})
             } catch {
-              setFlightSeries([])
+              setSeriesState({id: selected.id, series: []})
             }
           } else {
-            setFlightSeries([])
+            setSeriesState({id: selected.id, series: []})
           }
         }
       })
       .catch(() => {
         if (!cancelled) {
           setLinkedPhotos([])
-          if (selected.kind === 'flight') setFlightSeries([])
+          if (selected.kind === 'flight') setSeriesState({id: selected.id, series: []})
         }
       })
     return () => {
@@ -493,9 +512,10 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, 
           })}
         </div>
       ) : null}
+      {replay && onPlay ? <ReplayControls replay={replay} onPlay={onPlay} /> : null}
       {hasRoute && routeCoords ? (
         <div className="px-3 pb-2">
-          <ElevationChart compact coords={routeCoords} color={card.accent} onScrub={onRouteScrub} />
+          <ElevationChart compact coords={routeCoords} color={card.accent} onScrub={onRouteScrub} replay={replay} />
         </div>
       ) : null}
       {isFlight && flight && onFlightScrub ? (
@@ -506,6 +526,7 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, 
             durationSeconds={flight.durationSeconds}
             onScrub={onFlightScrub}
             series={flightSeries}
+            replay={replay}
           />
         </div>
       ) : null}

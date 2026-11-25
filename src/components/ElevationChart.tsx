@@ -2,18 +2,23 @@
 
 import {useCallback, useEffect, useRef, useState} from 'react'
 import {formatFeet, routeElevation, type ElevationProfile, type RouteScrubPoint} from '@/lib/elevation'
+import type {ReplayController} from '@/lib/flyover/replay-controller'
+import {useReplayCursor} from './ReplayControls'
 
 type Props = {
   coords: [number, number][]
   color: string
   compact?: boolean
   onScrub?: (point: RouteScrubPoint | null) => void
+  /** The replay of this route: its position is drawn as a cursor on the profile. */
+  replay?: ReplayController
 }
 
 const W = 300
 
 /** Elevation profile and climb for a route, computed in the browser from terrain tiles. */
-export function ElevationChart({coords, color, compact = false, onScrub}: Props) {
+export function ElevationChart({coords, color, compact = false, onScrub, replay}: Props) {
+  const replayFrame = useReplayCursor(replay)
   const H = compact ? 40 : 64
   const [state, setState] = useState<{profile: ElevationProfile | null; done: boolean}>({
     profile: null,
@@ -53,7 +58,7 @@ export function ElevationChart({coords, color, compact = false, onScrub}: Props)
       }
       setActiveIndex(index)
       const [lng, lat] = profile.lnglats[index]!
-      onScrub?.({lng, lat, miles: profile.miles[index]!, feet: profile.feet[index]!})
+      onScrub?.({lng, lat, miles: profile.miles[index]!, feet: profile.feet[index]!, fraction: profile.miles[index]! / total})
     },
     [onScrub, state.profile],
   )
@@ -79,7 +84,8 @@ export function ElevationChart({coords, color, compact = false, onScrub}: Props)
   })
   const line = points.join(' ')
   const area = `0,${H} ${line} ${W},${H}`
-  const scrubX = activeIndex != null ? (miles[activeIndex]! / total) * W : null
+  // The pointer wins while it's on the chart; otherwise the cursor shows where the replay is.
+  const scrubX = activeIndex != null ? (miles[activeIndex]! / total) * W : replayFrame ? replayFrame.fraction * W : null
 
   return (
     <div className={compact ? 'pt-0.5' : 'mt-3'}>
