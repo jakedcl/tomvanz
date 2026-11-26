@@ -25,6 +25,7 @@ import {
   maxSpeedMphFromSeries,
 } from '@/lib/flight-display'
 import {trackColor} from '@/lib/track-color'
+import {photoLink} from '@/lib/photo-link'
 
 type Props = {
   data: MapData
@@ -33,6 +34,8 @@ type Props = {
   onFlightScrub?: (sample: FlightSeriesSample | null) => void
   onRouteScrub?: (point: RouteScrubPoint | null) => void
   onOpenPhoto?: (id: string) => void
+  /** A photo's route or flight chip was tapped: open it (flies the map there). */
+  onOpenItem?: (item: SelectedItem) => void
   /** The replay of this flight or route (loaded here once its path is known). */
   replay?: ReplayController
   /** Starts the replay (the map also switches 3D on). */
@@ -183,8 +186,26 @@ function PointerColor({light}: {light: boolean}) {
   return <span ref={ref} hidden />
 }
 
+/** "Flight · name" / "Route · name" under a photo: tap to open what it was taken during or along. */
+function LinkedItemChip({data, selected, onOpenItem, className = ''}: {data: MapData; selected: SelectedItem; onOpenItem?: (item: SelectedItem) => void; className?: string}) {
+  const link = selected.kind === 'pin' && onOpenItem ? photoLink(data, selected.id) : null
+  if (!link) return null
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenItem?.(link.target)}
+      data-testid="linked-item-chip"
+      className={`inline-flex max-w-full items-center gap-1.5 rounded-full bg-black/[0.06] px-3 py-1 text-[12px] font-medium text-black/75 active:scale-95 ${className}`}
+    >
+      <span className="shrink-0 text-black/45">{link.kind === 'flight' ? 'Flight' : 'Route'}</span>
+      <span className="truncate">{link.title}</span>
+      <span aria-hidden className="shrink-0 text-black/45">›</span>
+    </button>
+  )
+}
+
 /** Map-anchored popup for a selected photo pin (not the bottom strip). */
-export function PhotoMapPopupCard({data, selected, onClose}: Props) {
+export function PhotoMapPopupCard({data, selected, onClose, onOpenItem}: Props) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
 
@@ -207,7 +228,8 @@ export function PhotoMapPopupCard({data, selected, onClose}: Props) {
   const untitled = card.title.trim() === ''
   const headline = untitled ? (card.stats[0] ?? '') : card.title
   const chips = untitled ? card.stats.slice(1) : card.stats
-  const hasDetails = chips.length > 0 || Boolean(card.body)
+  const linked = selected.kind === 'pin' && onOpenItem ? photoLink(data, selected.id) : null
+  const hasDetails = chips.length > 0 || Boolean(card.body) || Boolean(linked)
   const hasCaption = Boolean(headline) || Boolean(card.eyebrow)
 
   const share = async () => {
@@ -294,6 +316,7 @@ export function PhotoMapPopupCard({data, selected, onClose}: Props) {
       </div>
       {hasDetails ? (
         <div className="px-4 pb-4 pt-3.5">
+          {linked ? <LinkedItemChip data={data} selected={selected} onOpenItem={onOpenItem} className={chips.length > 0 || card.body ? 'mb-2' : ''} /> : null}
           {chips.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
               {chips.map((stat) => (
@@ -313,7 +336,7 @@ export function PhotoMapPopupCard({data, selected, onClose}: Props) {
   )
 }
 
-export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, onOpenPhoto, replay, onPlay, variant = 'card'}: Props) {
+export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, onOpenPhoto, onOpenItem, replay, onPlay, variant = 'card'}: Props) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const [linkedPhotos, setLinkedPhotos] = useState<LinkedPhoto[]>([])
@@ -452,6 +475,7 @@ export function InfoCard({data, selected, onClose, onFlightScrub, onRouteScrub, 
               {detailLine ? (
                 <p className="mt-1 text-[12px] leading-snug text-black/60 [overflow-wrap:anywhere]">{detailLine}</p>
               ) : null}
+              <LinkedItemChip data={data} selected={selected} onOpenItem={onOpenItem} className="mt-1.5" />
               {isFlight && (topSpeed != null || modePill) ? (
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   {topSpeed != null ? (

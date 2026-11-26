@@ -566,6 +566,7 @@ export function MapCanvas({
         data={data}
         selected={selected}
         onClose={() => onSelectRef.current(null)}
+        onOpenItem={(item) => onSelectRef.current(item)}
       />,
     )
 

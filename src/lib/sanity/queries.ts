@@ -35,6 +35,8 @@ export const mapQuery = defineQuery(`{
     note,
     location,
     "photo": image,
+    "flightId": flight._ref,
+    "routeId": route._ref,
     "isDrone": coalesce(drone, image.asset->originalFilename match "DJI_*", false)
   }
 }`)

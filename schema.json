@@ -214,6 +214,34 @@
         },
         "optional": true
       },
+      "cameraMake": {
+        "type": "objectAttribute",
+        "value": {
+          "type": "string"
+        },
+        "optional": true
+      },
+      "cameraModel": {
+        "type": "objectAttribute",
+        "value": {
+          "type": "string"
+        },
+        "optional": true
+      },
+      "altitudeMeters": {
+        "type": "objectAttribute",
+        "value": {
+          "type": "number"
+        },
+        "optional": true
+      },
+      "linkReview": {
+        "type": "objectAttribute",
+        "value": {
+          "type": "string"
+        },
+        "optional": true
+      },
       "flight": {
         "type": "objectAttribute",
         "value": {
@@ -460,6 +488,13 @@
           "type": "string"
         },
         "optional": true
+      },
+      "endedAt": {
+        "type": "objectAttribute",
+        "value": {
+          "type": "string"
+        },
+        "optional": true
       }
     }
   },
@@ -637,6 +672,13 @@
         },
         "optional": true
       },
+      "endedAt": {
+        "type": "objectAttribute",
+        "value": {
+          "type": "string"
+        },
+        "optional": true
+      },
       "place": {
         "type": "objectAttribute",
         "value": {
@@ -666,6 +708,13 @@
         "optional": true
       },
       "aircraft": {
+        "type": "objectAttribute",
+        "value": {
+          "type": "string"
+        },
+        "optional": true
+      },
+      "aircraftSerial": {
         "type": "objectAttribute",
         "value": {
           "type": "string"
