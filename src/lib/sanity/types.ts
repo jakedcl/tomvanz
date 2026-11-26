@@ -68,6 +68,9 @@ export type PinDoc = {
   at?: string
   /** Shot with a drone: spotted from a DJI file name, unless switched on or off by hand in the Studio. */
   isDrone?: boolean
+  /** The flight or route this photo was taken during or along (linked at upload). */
+  flightId?: string | null
+  routeId?: string | null
   location: Geopoint
   photo?: {
     asset?: {_ref: string}

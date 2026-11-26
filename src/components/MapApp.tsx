@@ -183,6 +183,7 @@ export function MapApp({data: allData, initialSelected = null, loadFailed = fals
         replay.play()
       }}
       onOpenPhoto={(id) => select({kind: 'pin', id})}
+      onOpenItem={select}
     />
   ) : null
   // A stack of items at one spot (the "1 of 6" strip): the panel lists just those, with the current one marked.
