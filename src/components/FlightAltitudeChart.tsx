@@ -175,7 +175,7 @@ function MotionReadout({
   formatDuration: (s: number) => string
 }) {
   return (
-    <div className="mb-2 flex flex-wrap gap-1.5">
+    <div className="mb-2 flex flex-nowrap gap-1 overflow-hidden">
       <Chip label="Height" value={formatFeet(metersToFeet(sample.height))} />
       <Chip label="Speed" value={`${(sample.speed * 2.237).toFixed(1)} mph`} />
       <Chip label="Battery" value={`${Math.round(sample.battery)}%`} />
@@ -187,7 +187,7 @@ function MotionReadout({
 
 function Chip({label, value}: {label: string; value: string}) {
   return (
-    <span className="rounded-full bg-black/[0.06] px-3 py-1 text-[12px] font-medium text-black/70" title={label}>
+    <span className="min-w-0 shrink-0 truncate rounded-full bg-black/[0.06] px-2.5 py-1 text-[12px] font-medium tabular-nums text-black/70 last:shrink" title={label}>
       {value}
     </span>
   )
